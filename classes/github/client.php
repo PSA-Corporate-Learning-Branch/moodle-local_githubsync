@@ -1,0 +1,246 @@
+<?php
+// This file is part of Moodle - http://moodle.org/
+//
+// Moodle is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// Moodle is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
+
+namespace local_githubsync\github;
+
+defined('MOODLE_INTERNAL') || die();
+
+require_once($CFG->libdir . '/filelib.php');
+
+/**
+ * GitHub REST API client.
+ *
+ * Uses the GitHub REST API to fetch repository content without requiring
+ * git to be installed on the Moodle server.
+ */
+class client {
+
+    /** @var string GitHub API base URL */
+    private const API_BASE = 'https://api.github.com';
+
+    /** @var string Repository owner */
+    private string $owner;
+
+    /** @var string Repository name */
+    private string $repo;
+
+    /** @var string Branch to sync from */
+    private string $branch;
+
+    /** @var string Personal Access Token */
+    private string $pat;
+
+    /** @var int Remaining API requests (from X-RateLimit-Remaining header) */
+    private int $ratelimit_remaining = -1;
+
+    /** @var int Rate limit reset timestamp */
+    private int $ratelimit_reset = 0;
+
+    /**
+     * Constructor.
+     *
+     * @param string $repourl Full GitHub repository URL
+     * @param string $pat Personal Access Token
+     * @param string $branch Branch name
+     */
+    public function __construct(string $repourl, string $pat, string $branch = 'main') {
+        $parsed = self::parse_repo_url($repourl);
+        $this->owner = $parsed['owner'];
+        $this->repo = $parsed['repo'];
+        $this->pat = $pat;
+        $this->branch = $branch;
+    }
+
+    /**
+     * Parse a GitHub URL into owner and repo.
+     *
+     * @param string $url GitHub repository URL
+     * @return array ['owner' => string, 'repo' => string]
+     * @throws \moodle_exception If URL is invalid
+     */
+    public static function parse_repo_url(string $url): array {
+        // Remove trailing slashes and .git suffix.
+        $url = rtrim($url, '/');
+        $url = preg_replace('/\.git$/', '', $url);
+
+        if (preg_match('#^https://github\.com/([^/]+)/([^/]+)$#', $url, $matches)) {
+            return ['owner' => $matches[1], 'repo' => $matches[2]];
+        }
+
+        throw new \moodle_exception('invalidrepourl', 'local_githubsync');
+    }
+
+    /**
+     * Test the connection to the repository.
+     *
+     * @return bool True if accessible
+     * @throws \moodle_exception If connection fails
+     */
+    public function test_connection(): bool {
+        $response = $this->api_request("/repos/{$this->owner}/{$this->repo}");
+        return !empty($response['id']);
+    }
+
+    /**
+     * Get the latest commit SHA for the configured branch.
+     *
+     * @return string The commit SHA
+     * @throws \moodle_exception If request fails
+     */
+    public function get_latest_commit_sha(): string {
+        $response = $this->api_request("/repos/{$this->owner}/{$this->repo}/commits/{$this->branch}");
+        return $response['sha'];
+    }
+
+    /**
+     * Get the full repository tree (recursive).
+     *
+     * @return array Array of tree entries, each with 'path', 'type' ('blob' or 'tree'), 'sha', 'size'
+     * @throws \moodle_exception If request fails
+     */
+    public function get_tree(): array {
+        $response = $this->api_request(
+            "/repos/{$this->owner}/{$this->repo}/git/trees/{$this->branch}",
+            ['recursive' => '1']
+        );
+
+        if (empty($response['tree'])) {
+            throw new \moodle_exception('syncfailed', 'local_githubsync', '', 'Empty repository tree');
+        }
+
+        return $response['tree'];
+    }
+
+    /**
+     * Get the contents of a file from the repository.
+     *
+     * @param string $path File path within the repository
+     * @return string Decoded file contents
+     * @throws \moodle_exception If request fails
+     */
+    public function get_file_contents(string $path): string {
+        $response = $this->api_request(
+            "/repos/{$this->owner}/{$this->repo}/contents/{$path}",
+            ['ref' => $this->branch]
+        );
+
+        if (empty($response['content'])) {
+            throw new \moodle_exception('syncfailed', 'local_githubsync', '', "Empty file: {$path}");
+        }
+
+        // GitHub returns base64-encoded content.
+        $content = base64_decode($response['content']);
+        if ($content === false) {
+            throw new \moodle_exception('syncfailed', 'local_githubsync', '', "Failed to decode: {$path}");
+        }
+
+        return $content;
+    }
+
+    /**
+     * Get the list of changed files between two commits.
+     *
+     * Uses the GitHub compare API for incremental sync.
+     *
+     * @param string $basesha The base commit SHA (last synced)
+     * @return array Array of changed file entries, each with 'filename', 'status' (added/modified/removed/renamed)
+     * @throws \moodle_exception If request fails
+     */
+    public function get_changed_files(string $basesha): array {
+        $response = $this->api_request(
+            "/repos/{$this->owner}/{$this->repo}/compare/{$basesha}...{$this->branch}"
+        );
+
+        if (!isset($response['files'])) {
+            return [];
+        }
+
+        return $response['files'];
+    }
+
+    /**
+     * Get rate limit status.
+     *
+     * @return array ['remaining' => int, 'reset' => int]
+     */
+    public function get_rate_limit_status(): array {
+        return [
+            'remaining' => $this->ratelimit_remaining,
+            'reset' => $this->ratelimit_reset,
+        ];
+    }
+
+    /**
+     * Make an authenticated request to the GitHub API.
+     *
+     * @param string $endpoint API endpoint path (e.g. /repos/owner/repo)
+     * @param array $params Query parameters
+     * @return array Decoded JSON response
+     * @throws \moodle_exception If request fails
+     */
+    private function api_request(string $endpoint, array $params = []): array {
+        $url = self::API_BASE . $endpoint;
+
+        if (!empty($params)) {
+            $url .= '?' . http_build_query($params);
+        }
+
+        $curl = new \curl();
+        $curl->setHeader([
+            'Authorization: token ' . $this->pat,
+            'Accept: application/vnd.github.v3+json',
+            'User-Agent: MoodleGitHubSync/1.0',
+        ]);
+
+        $response = $curl->get($url);
+
+        if ($curl->get_errno()) {
+            throw new \moodle_exception('connectionfailed', 'local_githubsync', '', $curl->error);
+        }
+
+        $info = $curl->get_info();
+        $httpcode = $info['http_code'] ?? 0;
+
+        // Track rate limit headers.
+        $responseheaders = $curl->getResponse();
+        if (isset($responseheaders['X-RateLimit-Remaining'])) {
+            $this->ratelimit_remaining = (int) $responseheaders['X-RateLimit-Remaining'];
+        }
+        if (isset($responseheaders['X-RateLimit-Reset'])) {
+            $this->ratelimit_reset = (int) $responseheaders['X-RateLimit-Reset'];
+        }
+
+        // Handle rate limiting.
+        if ($httpcode === 403 && $this->ratelimit_remaining === 0) {
+            $resettime = userdate($this->ratelimit_reset);
+            throw new \moodle_exception('connectionfailed', 'local_githubsync', '',
+                "GitHub API rate limit exceeded. Resets at {$resettime}");
+        }
+
+        if ($httpcode >= 400) {
+            $decoded = json_decode($response, true);
+            $message = $decoded['message'] ?? "HTTP {$httpcode}";
+            throw new \moodle_exception('connectionfailed', 'local_githubsync', '', $message);
+        }
+
+        $decoded = json_decode($response, true);
+        if ($decoded === null && json_last_error() !== JSON_ERROR_NONE) {
+            throw new \moodle_exception('connectionfailed', 'local_githubsync', '', 'Invalid JSON response');
+        }
+
+        return $decoded;
+    }
+}
