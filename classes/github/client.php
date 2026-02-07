@@ -90,7 +90,7 @@ class client {
      * @throws \moodle_exception If connection fails
      */
     public function test_connection(): bool {
-        $response = $this->api_request("/repos/{$this->owner}/{$this->repo}");
+        $response = $this->api_request($this->repo_endpoint());
         return !empty($response['id']);
     }
 
@@ -101,7 +101,7 @@ class client {
      * @throws \moodle_exception If request fails
      */
     public function get_latest_commit_sha(): string {
-        $response = $this->api_request("/repos/{$this->owner}/{$this->repo}/commits/{$this->branch}");
+        $response = $this->api_request($this->repo_endpoint('/commits/' . urlencode($this->branch)));
         return $response['sha'];
     }
 
@@ -113,7 +113,7 @@ class client {
      */
     public function get_tree(): array {
         $response = $this->api_request(
-            "/repos/{$this->owner}/{$this->repo}/git/trees/{$this->branch}",
+            $this->repo_endpoint('/git/trees/' . urlencode($this->branch)),
             ['recursive' => '1']
         );
 
@@ -132,19 +132,21 @@ class client {
      * @throws \moodle_exception If request fails
      */
     public function get_file_contents(string $path): string {
+        // Encode each path segment individually to preserve directory separators.
+        $encodedpath = implode('/', array_map('urlencode', explode('/', $path)));
         $response = $this->api_request(
-            "/repos/{$this->owner}/{$this->repo}/contents/{$path}",
+            $this->repo_endpoint('/contents/' . $encodedpath),
             ['ref' => $this->branch]
         );
 
         if (empty($response['content'])) {
-            throw new \moodle_exception('syncfailed', 'local_githubsync', '', "Empty file: {$path}");
+            throw new \moodle_exception('syncfailed', 'local_githubsync', '', 'Empty file');
         }
 
         // GitHub returns base64-encoded content.
         $content = base64_decode($response['content']);
         if ($content === false) {
-            throw new \moodle_exception('syncfailed', 'local_githubsync', '', "Failed to decode: {$path}");
+            throw new \moodle_exception('syncfailed', 'local_githubsync', '', 'Failed to decode file');
         }
 
         return $content;
@@ -161,7 +163,7 @@ class client {
      */
     public function get_changed_files(string $basesha): array {
         $response = $this->api_request(
-            "/repos/{$this->owner}/{$this->repo}/compare/{$basesha}...{$this->branch}"
+            $this->repo_endpoint('/compare/' . urlencode($basesha) . '...' . urlencode($this->branch))
         );
 
         if (!isset($response['files'])) {
@@ -169,6 +171,16 @@ class client {
         }
 
         return $response['files'];
+    }
+
+    /**
+     * Build a repo-scoped API endpoint path with URL-encoded owner/repo.
+     *
+     * @param string $suffix Additional path segments
+     * @return string The full endpoint path
+     */
+    private function repo_endpoint(string $suffix = ''): string {
+        return '/repos/' . urlencode($this->owner) . '/' . urlencode($this->repo) . $suffix;
     }
 
     /**

@@ -70,16 +70,16 @@ class sync_courses extends \core\task\scheduled_task {
 
             mtrace("    {$result['status']}: {$result['summary']}");
         } catch (\Exception $e) {
-            mtrace("    FAILED: {$e->getMessage()}");
+            mtrace('    FAILED: Sync error for course ' . $config->courseid);
 
-            // Log the failure.
+            // Log the failure — store only the error message, not full stack trace.
             $log = new \stdClass();
             $log->courseid = $config->courseid;
             $log->userid = $config->created_by ?: 0;
             $log->commit_sha = '';
             $log->status = 'failed';
-            $log->summary = $e->getMessage();
-            $log->details = json_encode(['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            $log->summary = 'Scheduled sync failed';
+            $log->details = json_encode(['error' => $e->getMessage()]);
             $log->timecreated = time();
             $DB->insert_record('local_githubsync_log', $log);
         }

@@ -123,8 +123,8 @@ if ($logs) {
     foreach ($logs as $log) {
         $table->data[] = [
             userdate($log->timecreated),
-            $log->status,
-            substr($log->commit_sha ?? '', 0, 7),
+            s($log->status),
+            s(substr($log->commit_sha ?? '', 0, 7)),
             format_text($log->summary, FORMAT_PLAIN),
         ];
     }

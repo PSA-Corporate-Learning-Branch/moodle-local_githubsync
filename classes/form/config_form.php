@@ -50,7 +50,7 @@ class config_form extends \moodleform {
             $lastsynced = userdate($this->_customdata['last_sync_time']);
             $sha = $this->_customdata['last_sync_sha'] ?? '';
             $mform->addElement('static', 'lastsyncinfo', get_string('lastsynced', 'local_githubsync'),
-                $lastsynced . ($sha ? " (commit {$sha})" : ''));
+                $lastsynced . ($sha ? ' (commit ' . s($sha) . ')' : ''));
         }
 
         $this->add_action_buttons(true, get_string('savesettings', 'local_githubsync'));
@@ -59,10 +59,26 @@ class config_form extends \moodleform {
     public function validation($data, $files) {
         $errors = parent::validation($data, $files);
 
-        // Validate GitHub URL format.
+        // Validate GitHub URL format — anchored to prevent trailing path injection.
         if (!empty($data['repo_url'])) {
-            if (!preg_match('#^https://github\.com/[^/]+/[^/]+#', $data['repo_url'])) {
+            $url = rtrim($data['repo_url'], '/');
+            $url = preg_replace('/\.git$/', '', $url);
+            if (!preg_match('#^https://github\.com/[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$#', $url)) {
                 $errors['repo_url'] = get_string('invalidrepourl', 'local_githubsync');
+            }
+        }
+
+        // Validate GitHub PAT format if provided.
+        if (!empty($data['pat'])) {
+            if (!preg_match('/^(ghp_[a-zA-Z0-9]{36,}|github_pat_[a-zA-Z0-9_]{22,})$/', $data['pat'])) {
+                $errors['pat'] = get_string('invalidpat', 'local_githubsync');
+            }
+        }
+
+        // Validate branch name — alphanumeric, hyphens, underscores, dots, slashes.
+        if (!empty($data['branch'])) {
+            if (!preg_match('#^[a-zA-Z0-9._/-]+$#', $data['branch'])) {
+                $errors['branch'] = get_string('invalidbranch', 'local_githubsync');
             }
         }
 

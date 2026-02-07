@@ -21,7 +21,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Run Semgrep OWASP Top 10
+      - name: Run Semgrep OWASP Top 10 + Custom Moodle Rules
         run: |
           semgrep --config "p/owasp-top-ten" \
                   --config "p/php" \
@@ -31,6 +31,7 @@ jobs:
                   --config "p/xss" \
                   --config "p/secrets" \
                   --config "p/insecure-transport" \
+                  --config .semgrep.yml \
                   --error \
                   --sarif \
                   --output=semgrep-results.sarif \

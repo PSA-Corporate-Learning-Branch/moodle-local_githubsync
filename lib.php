@@ -74,7 +74,8 @@ function local_githubsync_pluginfile($course, $cm, $context, $filearea, $args, $
         return false;
     }
 
-    require_course_login($course, true);
+    // Do not allow guest access — assets may come from private repos.
+    require_login($course);
 
     $itemid = array_shift($args);
     $relativepath = implode('/', $args);

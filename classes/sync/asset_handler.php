@@ -35,6 +35,15 @@ use local_githubsync\github\client;
  */
 class asset_handler {
 
+    /** @var array Allowed asset file extensions */
+    private const ALLOWED_EXTENSIONS = [
+        'css', 'js',
+        'png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'bmp',
+        'woff', 'woff2', 'ttf', 'eot', 'otf',
+        'pdf', 'mp3', 'mp4', 'webm', 'ogg',
+        'json', 'txt', 'csv', 'xml',
+    ];
+
     /** @var int Course ID */
     private int $courseid;
 
@@ -78,6 +87,14 @@ class asset_handler {
             $dirname = dirname($relpath);
             $filename = basename($relpath);
             $filepath = ($dirname === '.' || $dirname === '') ? '/' : '/' . $dirname . '/';
+
+            // Block disallowed file types (e.g. .php, .svg with potential XSS).
+            $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+            if (!in_array($ext, self::ALLOWED_EXTENSIONS)) {
+                $this->operations[] = ['type' => 'asset_blocked', 'path' => $repopath,
+                    'detail' => "Blocked file type: .{$ext}"];
+                continue;
+            }
 
             // Check if we already have this file with the same content hash.
             $mapping = $DB->get_record('local_githubsync_mapping', [

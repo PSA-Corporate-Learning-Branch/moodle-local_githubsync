@@ -67,12 +67,13 @@ try {
         );
     }
 } catch (\Exception $e) {
-    // Log the failure.
+    // Log the failure with full details internally.
     $engine->write_log($USER->id, '', 'failed', $e->getMessage());
 
+    // Show generic error to user — full details are in the sync log.
     redirect(
         new moodle_url('/local/githubsync/config.php', ['courseid' => $courseid]),
-        get_string('syncfailed', 'local_githubsync', $e->getMessage()),
+        get_string('syncfailed_generic', 'local_githubsync'),
         null,
         \core\output\notification::NOTIFY_ERROR
     );

@@ -556,52 +556,88 @@ class engine {
     }
 
     /**
-     * Encrypt a PAT for storage using Moodle's encryption API.
+     * Encrypt a PAT for storage using Moodle's Sodium encryption API.
      *
      * @param string $pat The plaintext PAT
      * @return string The encrypted PAT
+     * @throws \moodle_exception If encryption is not available
      */
     public static function encrypt_pat(string $pat): string {
         if (empty($pat)) {
             return '';
         }
 
-        // Use Moodle's encryption API if available and key exists.
-        if (class_exists('\core\encryption') && \core\encryption::key_exists()) {
-            return \core\encryption::encrypt($pat);
+        if (!class_exists('\core\encryption') || !\core\encryption::key_exists()) {
+            throw new \moodle_exception('syncfailed', 'local_githubsync', '',
+                get_string('encryption_required', 'local_githubsync'));
         }
 
-        // Fallback to base64 if encryption key not set up.
-        return 'base64:' . base64_encode($pat);
+        return \core\encryption::encrypt($pat);
     }
 
     /**
      * Decrypt PAT from storage.
      *
+     * Handles migration from legacy base64-encoded values by re-encrypting
+     * with Sodium on first access.
+     *
      * @param string $encrypted The encrypted PAT
      * @return string The decrypted PAT
+     * @throws \moodle_exception If decryption fails
      */
     public static function decrypt_pat(string $encrypted): string {
         if (empty($encrypted)) {
             return '';
         }
 
-        // Handle base64 fallback format.
+        // Migrate legacy base64-only values (from older versions).
         if (str_starts_with($encrypted, 'base64:')) {
-            return base64_decode(substr($encrypted, 7));
+            $pat = base64_decode(substr($encrypted, 7));
+            // Re-encrypt with Sodium if possible, so legacy values are upgraded.
+            self::migrate_legacy_pat($pat, $encrypted);
+            return $pat;
         }
 
-        // Handle legacy plain base64 (from Phase 1).
+        // Handle legacy plain base64 (no prefix, no colon — pre-encryption era).
         if (!str_contains($encrypted, ':')) {
-            return base64_decode($encrypted);
+            $pat = base64_decode($encrypted);
+            self::migrate_legacy_pat($pat, $encrypted);
+            return $pat;
         }
 
-        // Use Moodle's encryption API.
-        if (class_exists('\core\encryption')) {
-            return \core\encryption::decrypt($encrypted);
+        // Standard Sodium decryption.
+        if (!class_exists('\core\encryption')) {
+            throw new \moodle_exception('syncfailed', 'local_githubsync', '',
+                get_string('encryption_required', 'local_githubsync'));
         }
 
-        // Last resort fallback.
-        return base64_decode($encrypted);
+        return \core\encryption::decrypt($encrypted);
+    }
+
+    /**
+     * Re-encrypt a legacy PAT with Sodium and update the database.
+     *
+     * @param string $plainpat The decrypted PAT
+     * @param string $oldencrypted The old encrypted value to find the record
+     */
+    private static function migrate_legacy_pat(string $plainpat, string $oldencrypted): void {
+        global $DB;
+
+        if (!class_exists('\core\encryption') || !\core\encryption::key_exists()) {
+            return; // Cannot migrate yet — will try again on next access.
+        }
+
+        try {
+            $newencrypted = \core\encryption::encrypt($plainpat);
+            $records = $DB->get_records('local_githubsync_config', ['pat_encrypted' => $oldencrypted]);
+            foreach ($records as $record) {
+                $record->pat_encrypted = $newencrypted;
+                $record->timemodified = time();
+                $DB->update_record('local_githubsync_config', $record);
+            }
+        } catch (\Exception $e) {
+            // Silently fail migration — the PAT was already decrypted successfully.
+            debugging('githubsync: Failed to migrate legacy PAT encryption: ' . $e->getMessage());
+        }
     }
 }

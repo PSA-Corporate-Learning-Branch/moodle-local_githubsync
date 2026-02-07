@@ -62,17 +62,25 @@ class course_builder {
             $changed = true;
         }
         if (!empty($coursedata['shortname']) && $coursedata['shortname'] !== $this->course->shortname) {
-            $update->shortname = $coursedata['shortname'];
-            $changed = true;
+            // Validate shortname is not already taken by another course.
+            $existing = $DB->get_record('course', ['shortname' => $coursedata['shortname']]);
+            if (!$existing || $existing->id == $this->course->id) {
+                $update->shortname = clean_param($coursedata['shortname'], PARAM_TEXT);
+                $changed = true;
+            }
         }
         if (isset($coursedata['summary']) && $coursedata['summary'] !== $this->course->summary) {
-            $update->summary = $coursedata['summary'];
+            $update->summary = purify_html($coursedata['summary']);
             $update->summaryformat = FORMAT_HTML;
             $changed = true;
         }
         if (!empty($coursedata['format']) && $coursedata['format'] !== $this->course->format) {
-            $update->format = $coursedata['format'];
-            $changed = true;
+            // Validate format is an installed course format.
+            $formats = \core_plugin_manager::instance()->get_plugins_of_type('format');
+            if (isset($formats[$coursedata['format']])) {
+                $update->format = $coursedata['format'];
+                $changed = true;
+            }
         }
 
         if ($changed) {
@@ -113,7 +121,7 @@ class course_builder {
             $updatedata['name'] = $sectiondata['title'];
         }
         if (isset($sectiondata['summary'])) {
-            $updatedata['summary'] = $sectiondata['summary'];
+            $updatedata['summary'] = purify_html($sectiondata['summary']);
             $updatedata['summaryformat'] = FORMAT_HTML;
         }
         if (isset($sectiondata['visible'])) {
@@ -149,8 +157,8 @@ class course_builder {
         $moduleinfo->visible = 1;
         $moduleinfo->visibleoncoursepage = 1;
 
-        // Page-specific fields.
-        $moduleinfo->content = $htmlcontent;
+        // Page-specific fields — sanitize HTML from external source.
+        $moduleinfo->content = purify_html($htmlcontent);
         $moduleinfo->contentformat = FORMAT_HTML;
         $moduleinfo->display = RESOURCELIB_DISPLAY_OPEN;
         $moduleinfo->printintro = 0;
@@ -179,9 +187,9 @@ class course_builder {
         $cm = get_coursemodule_from_id('page', $cmid, 0, false, MUST_EXIST);
         $page = $DB->get_record('page', ['id' => $cm->instance], '*', MUST_EXIST);
 
-        // Update the page record directly for content changes.
+        // Update the page record directly for content changes — sanitize HTML from external source.
         $page->name = $name;
-        $page->content = $htmlcontent;
+        $page->content = purify_html($htmlcontent);
         $page->contentformat = FORMAT_HTML;
         $page->timemodified = time();
         $DB->update_record('page', $page);
@@ -211,8 +219,8 @@ class course_builder {
         $moduleinfo->visible = 1;
         $moduleinfo->visibleoncoursepage = 1;
 
-        // Label uses intro as its content.
-        $moduleinfo->intro = $htmlcontent;
+        // Label uses intro as its content — sanitize HTML from external source.
+        $moduleinfo->intro = purify_html($htmlcontent);
         $moduleinfo->introformat = FORMAT_HTML;
 
         $result = add_moduleinfo($moduleinfo, $this->course);
@@ -245,7 +253,7 @@ class course_builder {
         $moduleinfo->externalurl = $url;
         $moduleinfo->display = RESOURCELIB_DISPLAY_AUTO;
 
-        $moduleinfo->intro = $intro;
+        $moduleinfo->intro = purify_html($intro);
         $moduleinfo->introformat = FORMAT_HTML;
 
         $result = add_moduleinfo($moduleinfo, $this->course);

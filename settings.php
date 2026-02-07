@@ -35,6 +35,14 @@ if ($hassiteconfig) {
         PARAM_TEXT
     ));
 
+    // Webhook secret for HMAC-SHA256 signature verification.
+    $settings->add(new admin_setting_configpasswordunmask(
+        'local_githubsync/webhook_secret',
+        get_string('settings_webhook_secret', 'local_githubsync'),
+        get_string('settings_webhook_secret_desc', 'local_githubsync'),
+        ''
+    ));
+
     // Webhook URL display (read-only info).
     $webhookurl = new moodle_url('/local/githubsync/webhook.php');
     $settings->add(new admin_setting_heading(

@@ -59,7 +59,7 @@ Options:
 }
 
 // Set up admin user context.
-$USER = get_admin();
+\core\cron::setup_user(get_admin());
 
 // Build query conditions.
 $conditions = [];
@@ -118,7 +118,7 @@ foreach ($configs as $config) {
         $log->userid = $USER->id;
         $log->commit_sha = '';
         $log->status = 'failed';
-        $log->summary = $e->getMessage();
+        $log->summary = 'CLI sync failed';
         $log->details = json_encode(['error' => $e->getMessage()]);
         $log->timecreated = time();
         $DB->insert_record('local_githubsync_log', $log);

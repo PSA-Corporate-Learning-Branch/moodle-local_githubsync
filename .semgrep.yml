@@ -1,0 +1,156 @@
+rules:
+  # --- XSS / Output Escaping ---
+
+  - id: moodle-echo-unescaped-variable
+    patterns:
+      - pattern: echo $VAR;
+      - pattern-not: echo $OUTPUT->header();
+      - pattern-not: echo $OUTPUT->footer();
+      - pattern-not: echo $OUTPUT->heading(...);
+      - pattern-not: echo json_encode(...);
+      - pattern-not: echo html_writer::table(...);
+      - pattern-not: echo html_writer::div(...);
+      - pattern-not: echo html_writer::tag(...);
+      - pattern-not: echo html_writer::link(...);
+    message: >
+      Echoing a variable directly may lead to XSS. Use s($var) for plain text,
+      format_text() for HTML, or html_writer for structured output.
+    languages: [php]
+    severity: WARNING
+    metadata:
+      category: security
+      owasp: "A03:2021 Injection"
+    paths:
+      exclude:
+        - "**/cli/*"
+
+  - id: moodle-raw-html-storage
+    patterns:
+      - pattern: $OBJ->content = $VAR;
+      - pattern-not: $OBJ->content = purify_html(...);
+      - pattern-not: $OBJ->content = clean_text(...);
+      - pattern-not: $OBJ->content = format_text(...);
+    message: >
+      Storing content from an external source without purify_html() may allow
+      stored XSS. Use purify_html($content) before storing HTML in the database.
+    languages: [php]
+    severity: WARNING
+    metadata:
+      category: security
+      owasp: "A03:2021 Injection"
+
+  - id: moodle-raw-intro-storage
+    patterns:
+      - pattern: $OBJ->intro = $VAR;
+      - pattern-not: $OBJ->intro = purify_html(...);
+      - pattern-not: $OBJ->intro = clean_text(...);
+      - pattern-not: $OBJ->intro = '';
+    message: >
+      Storing intro content from an external source without purify_html() may allow
+      stored XSS. Sanitize before storage.
+    languages: [php]
+    severity: WARNING
+    metadata:
+      category: security
+      owasp: "A03:2021 Injection"
+
+  - id: moodle-raw-summary-storage
+    patterns:
+      - pattern: $OBJ->summary = $VAR;
+      - pattern-not: $OBJ->summary = purify_html(...);
+      - pattern-not: $OBJ->summary = clean_text(...);
+      - pattern-not: $OBJ->summary = '...';
+      - pattern-not: $OBJ->summary = "...";
+      # Only flag ->summary on DB-record-like objects (update, section), not on
+      # lang string placeholder objects ($a) or log objects.
+      - metavariable-regex:
+          metavariable: $OBJ
+          regex: "^\\$(?!a$|log$|result$).*"
+    message: >
+      Storing summary content without purify_html() may allow stored XSS.
+    languages: [php]
+    severity: WARNING
+    metadata:
+      category: security
+      owasp: "A03:2021 Injection"
+
+  # --- Access Control ---
+
+  - id: moodle-direct-post-access
+    pattern: $_POST[$KEY]
+    message: >
+      Direct $_POST access bypasses Moodle's parameter cleaning. Use required_param()
+      or optional_param() with appropriate PARAM_* types, or use moodleform.
+    languages: [php]
+    severity: WARNING
+    metadata:
+      category: security
+      owasp: "A01:2021 Broken Access Control"
+
+  - id: moodle-global-user-assignment
+    patterns:
+      - pattern: $USER = get_admin();
+    message: >
+      Direct $USER assignment bypasses session management. Use
+      \core\session\manager::set_user() or \core\cron::setup_user() instead.
+    languages: [php]
+    severity: WARNING
+    metadata:
+      category: security
+      owasp: "A01:2021 Broken Access Control"
+
+  # --- Cryptographic Failures ---
+
+  - id: base64-as-encryption
+    patterns:
+      - pattern: |
+          return 'base64:' . base64_encode($PAT);
+    message: >
+      Base64 is encoding, not encryption. Use \core\encryption::encrypt()
+      for sensitive data storage. Never use base64 as a substitute for encryption.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      category: security
+      owasp: "A02:2021 Cryptographic Failures"
+
+  # --- Information Disclosure ---
+
+  - id: moodle-exception-message-to-user
+    pattern: redirect(..., $E->getMessage(), ...);
+    message: >
+      Exposing exception messages to users may leak internal paths, database
+      details, or API errors. Use a generic error message for the user and log
+      details internally.
+    languages: [php]
+    severity: WARNING
+    metadata:
+      category: security
+      owasp: "A05:2021 Security Misconfiguration"
+
+  - id: stack-trace-in-database
+    patterns:
+      - pattern: $E->getTraceAsString()
+    message: >
+      Storing stack traces in the database may expose internal file paths,
+      function arguments (including secrets), and system architecture.
+      Log only the error message, not the full trace.
+    languages: [php]
+    severity: WARNING
+    metadata:
+      category: security
+      owasp: "A09:2021 Logging Failures"
+
+  # --- Webhook Security ---
+
+  - id: moodle-require-course-login-guest
+    pattern: require_course_login($COURSE, true);
+    message: >
+      require_course_login with second param true enables guest auto-login.
+      Assets from private repos should not be accessible to guests.
+      Use require_login($course) instead.
+    languages: [php]
+    severity: WARNING
+    metadata:
+      category: security
+      owasp: "A01:2021 Broken Access Control"
