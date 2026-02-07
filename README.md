@@ -310,6 +310,13 @@ composer install
 vendor/bin/phpcs --standard=moodle --extensions=php --ignore=vendor/,phpstan-bootstrap.php .
 ```
 
+## Contributing
+
+- **Branch protection** is enabled on `main` — all changes must go through a pull request with passing CI checks.
+- Use the PR template and ensure all three checks pass (Semgrep, PHPStan, Moodle CS).
+- Dependabot keeps composer and GitHub Actions dependencies up to date automatically.
+- See [CHANGELOG.md](CHANGELOG.md) for release history.
+
 ## File Structure
 
 ```
@@ -320,7 +327,10 @@ local/githubsync/
   sync.php                             # Sync trigger page
   webhook.php                          # GitHub webhook endpoint
   settings.php                         # Global admin settings
+  LICENSE                              # GNU GPL v3
   SECURITY.md                          # Security architecture and audit history
+  CHANGELOG.md                         # Release history
+  .editorconfig                        # Editor formatting rules
   .semgrep.yml                         # Custom Moodle security rules for Semgrep
   phpstan.neon                         # PHPStan configuration
   db/
@@ -342,10 +352,16 @@ local/githubsync/
       sync_courses.php                 # Scheduled task for auto-sync
   cli/
     sync_all.php                       # CLI script for bulk sync
-  .github/workflows/
-    semgrep.yml                        # Semgrep OWASP security scan
-    phpstan.yml                        # PHPStan static analysis
-    moodle-cs.yml                      # Moodle coding standards
+  .github/
+    dependabot.yml                     # Automated dependency updates
+    pull_request_template.md           # PR template
+    ISSUE_TEMPLATE/
+      bug_report.yml                   # Bug report form
+      feature_request.yml              # Feature request form
+    workflows/
+      semgrep.yml                      # Semgrep OWASP security scan
+      phpstan.yml                      # PHPStan static analysis
+      moodle-cs.yml                    # Moodle coding standards
 ```
 
 ## License
