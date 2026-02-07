@@ -1,0 +1,63 @@
+name: PHPStan Static Analysis
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  phpstan:
+    name: PHPStan Level 6
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v4
+        with:
+          path: local/githubsync
+
+      - name: Checkout Moodle
+        uses: actions/checkout@v4
+        with:
+          repository: moodle/moodle
+          ref: MOODLE_405_STABLE
+          path: moodle
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          tools: composer:v2
+
+      - name: Link plugin into Moodle
+        run: |
+          ln -s $GITHUB_WORKSPACE/local/githubsync $GITHUB_WORKSPACE/moodle/local/githubsync
+
+      - name: Create Moodle config
+        run: |
+          cat > $GITHUB_WORKSPACE/moodle/config.php << 'MOODLECFG'
+          <?php
+          $CFG = new stdClass();
+          $CFG->dirroot = __DIR__;
+          $CFG->libdir = __DIR__ . '/lib';
+          $CFG->dataroot = '/tmp/moodledata';
+          $CFG->wwwroot = 'http://localhost';
+          $CFG->admin = 'admin';
+          $CFG->dbtype = 'mysqli';
+          $CFG->dblibrary = 'native';
+          $CFG->dbhost = 'localhost';
+          $CFG->dbname = 'moodle';
+          $CFG->dbuser = 'root';
+          $CFG->dbpass = '';
+          $CFG->prefix = 'mdl_';
+          @mkdir('/tmp/moodledata', 0777, true);
+          MOODLECFG
+
+      - name: Install PHPStan
+        working-directory: local/githubsync
+        run: composer install --no-interaction
+
+      - name: Run PHPStan
+        working-directory: local/githubsync
+        run: vendor/bin/phpstan analyse --memory-limit=512M --no-progress

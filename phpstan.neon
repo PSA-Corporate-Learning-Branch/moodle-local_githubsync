@@ -1,0 +1,36 @@
+parameters:
+    level: 6
+    paths:
+        - .
+    excludePaths:
+        - vendor
+        - phpstan-bootstrap.php
+    bootstrapFiles:
+        - phpstan-bootstrap.php
+    scanDirectories:
+        - ../../lib
+        - ../../course
+        - ../../mod/page
+        - ../../mod/label
+        - ../../mod/url
+    ignoreErrors:
+        # Moodle globals — set by Moodle's bootstrap, not visible to PHPStan.
+        - '#Variable \$DB might not be defined#'
+        - '#Variable \$CFG might not be defined#'
+        - '#Variable \$USER might not be defined#'
+        - '#Variable \$OUTPUT might not be defined#'
+        - '#Variable \$PAGE might not be defined#'
+        - '#Variable \$ADMIN might not be defined#'
+        # Moodle version.php and settings.php use variables set by the caller.
+        - '#Variable \$plugin might not be defined#'
+        - '#Variable \$hassiteconfig might not be defined#'
+        # Moodle's iterableValue strictness — plugin uses mixed arrays from DB and API.
+        -
+            identifier: missingType.iterableValue
+        # Moodle callback functions have no return type by convention.
+        -
+            identifier: missingType.return
+            path: lib.php
+        -
+            identifier: missingType.return
+            path: classes/form/config_form.php

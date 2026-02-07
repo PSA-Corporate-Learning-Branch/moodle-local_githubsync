@@ -144,8 +144,8 @@ class client {
         }
 
         // GitHub returns base64-encoded content.
-        $content = base64_decode($response['content']);
-        if ($content === false) {
+        $content = base64_decode($response['content'], true);
+        if (!is_string($content) || $content === '') {
             throw new \moodle_exception('syncfailed', 'local_githubsync', '', 'Failed to decode file');
         }
 

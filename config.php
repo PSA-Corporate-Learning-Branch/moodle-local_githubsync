@@ -125,7 +125,7 @@ if ($logs) {
             userdate($log->timecreated),
             s($log->status),
             s(substr($log->commit_sha ?? '', 0, 7)),
-            format_text($log->summary, FORMAT_PLAIN),
+            format_text($log->summary, (int) FORMAT_PLAIN),
         ];
     }
     echo html_writer::table($table);

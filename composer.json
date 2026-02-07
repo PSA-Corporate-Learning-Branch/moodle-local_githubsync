@@ -1,0 +1,14 @@
+{
+    "name": "local/githubsync",
+    "description": "Moodle GitHub Sync plugin",
+    "type": "moodle-local",
+    "authors": [
+        {
+            "name": "Allan Haggett",
+            "email": "allanhaggett@users.noreply.github.com"
+        }
+    ],
+    "require-dev": {
+        "phpstan/phpstan": "^2.0"
+    }
+}

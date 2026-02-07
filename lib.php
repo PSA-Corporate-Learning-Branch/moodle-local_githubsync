@@ -90,4 +90,5 @@ function local_githubsync_pluginfile($course, $cm, $context, $filearea, $args, $
     }
 
     send_stored_file($file, 86400, 0, $forcedownload, $options);
+    return true;
 }
