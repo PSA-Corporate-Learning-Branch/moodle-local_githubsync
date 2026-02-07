@@ -13,13 +13,13 @@ jobs:
 
     steps:
       - name: Checkout Moodle
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: moodle/moodle
           ref: MOODLE_405_STABLE
 
       - name: Checkout plugin into Moodle
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: local/githubsync
 
