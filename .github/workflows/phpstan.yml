@@ -12,17 +12,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout plugin
-        uses: actions/checkout@v4
-        with:
-          path: local/githubsync
-
       - name: Checkout Moodle
         uses: actions/checkout@v4
         with:
           repository: moodle/moodle
           ref: MOODLE_405_STABLE
-          path: moodle
+
+      - name: Checkout plugin into Moodle
+        uses: actions/checkout@v4
+        with:
+          path: local/githubsync
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
@@ -30,13 +29,9 @@ jobs:
           php-version: '8.2'
           tools: composer:v2
 
-      - name: Link plugin into Moodle
-        run: |
-          ln -s $GITHUB_WORKSPACE/local/githubsync $GITHUB_WORKSPACE/moodle/local/githubsync
-
       - name: Create Moodle config
         run: |
-          cat > $GITHUB_WORKSPACE/moodle/config.php << 'MOODLECFG'
+          cat > config.php << 'MOODLECFG'
           <?php
           $CFG = new stdClass();
           $CFG->dirroot = __DIR__;
