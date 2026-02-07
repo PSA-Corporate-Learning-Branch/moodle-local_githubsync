@@ -14,13 +14,20 @@
 // You should have received a copy of the GNU General Public License
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
-defined('MOODLE_INTERNAL') || die();
+/**
+ * Library functions for local_githubsync.
+ *
+ * @package    local_githubsync
+ * @copyright  2026 Allan Haggett
+ * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ */
 
 /**
  * Add GitHub Sync node to course settings navigation.
  *
  * @param settings_navigation $settingsnav
  * @param context $context
+ * @package local_githubsync
  */
 function local_githubsync_extend_settings_navigation(settings_navigation $settingsnav, context $context) {
     if ($context->contextlevel !== CONTEXT_COURSE) {
@@ -33,8 +40,10 @@ function local_githubsync_extend_settings_navigation(settings_navigation $settin
     }
 
     // Check if user has either configure or sync capability.
-    if (!has_capability('local/githubsync:configure', $context) &&
-        !has_capability('local/githubsync:sync', $context)) {
+    if (
+        !has_capability('local/githubsync:configure', $context) &&
+        !has_capability('local/githubsync:sync', $context)
+    ) {
         return;
     }
 
@@ -64,6 +73,7 @@ function local_githubsync_extend_settings_navigation(settings_navigation $settin
  * @param bool $forcedownload Whether to force download
  * @param array $options Additional options
  * @return bool False if file not found
+ * @package local_githubsync
  */
 function local_githubsync_pluginfile($course, $cm, $context, $filearea, $args, $forcedownload, array $options = []) {
     if ($context->contextlevel !== CONTEXT_COURSE) {

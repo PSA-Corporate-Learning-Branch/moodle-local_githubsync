@@ -20,8 +20,17 @@ defined('MOODLE_INTERNAL') || die();
 
 require_once($CFG->libdir . '/formslib.php');
 
+/**
+ * Configuration form for GitHub Sync course settings.
+ *
+ * @package    local_githubsync
+ * @copyright  2026 Allan Haggett
+ * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ */
 class config_form extends \moodleform {
-
+    /**
+     * Form definition.
+     */
     protected function definition() {
         $mform = $this->_form;
 
@@ -42,20 +51,35 @@ class config_form extends \moodleform {
         $mform->setType('branch', PARAM_TEXT);
         $mform->setDefault('branch', get_config('local_githubsync', 'default_branch') ?: 'main');
 
-        $mform->addElement('advcheckbox', 'auto_sync', get_string('auto_sync', 'local_githubsync'),
-            get_string('auto_sync_desc', 'local_githubsync'));
+        $mform->addElement(
+            'advcheckbox',
+            'auto_sync',
+            get_string('auto_sync', 'local_githubsync'),
+            get_string('auto_sync_desc', 'local_githubsync')
+        );
 
         // Show last sync info if available.
         if (!empty($this->_customdata['last_sync_time'])) {
             $lastsynced = userdate($this->_customdata['last_sync_time']);
             $sha = $this->_customdata['last_sync_sha'] ?? '';
-            $mform->addElement('static', 'lastsyncinfo', get_string('lastsynced', 'local_githubsync'),
-                $lastsynced . ($sha ? ' (commit ' . s($sha) . ')' : ''));
+            $mform->addElement(
+                'static',
+                'lastsyncinfo',
+                get_string('lastsynced', 'local_githubsync'),
+                $lastsynced . ($sha ? ' (commit ' . s($sha) . ')' : '')
+            );
         }
 
         $this->add_action_buttons(true, get_string('savesettings', 'local_githubsync'));
     }
 
+    /**
+     * Form validation.
+     *
+     * @param array $data Form data
+     * @param array $files Uploaded files
+     * @return array Validation errors
+     */
     public function validation($data, $files) {
         $errors = parent::validation($data, $files);
 

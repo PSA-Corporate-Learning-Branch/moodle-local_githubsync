@@ -25,6 +25,9 @@
  *   Content type: application/json
  *   Secret: (must match the value in Moodle admin settings)
  *   Events: Just the push event
+ * @package    local_githubsync
+ * @copyright  2026 Allan Haggett
+ * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
 define('NO_MOODLE_COOKIES', true);

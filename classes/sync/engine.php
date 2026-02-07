@@ -16,8 +16,6 @@
 
 namespace local_githubsync\sync;
 
-defined('MOODLE_INTERNAL') || die();
-
 use local_githubsync\github\client;
 
 /**
@@ -25,9 +23,12 @@ use local_githubsync\github\client;
  *
  * Coordinates fetching repo content from GitHub and building/updating
  * the Moodle course structure to match.
+ *
+ * @package    local_githubsync
+ * @copyright  2026 Allan Haggett
+ * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class engine {
-
     /** @var \stdClass Course record */
     private \stdClass $course;
 
@@ -47,22 +48,22 @@ class engine {
     private array $operations = [];
 
     /** @var int Sections created count */
-    private int $sections_created = 0;
+    private int $sectionscreated = 0;
 
     /** @var int Sections updated count */
-    private int $sections_updated = 0;
+    private int $sectionsupdated = 0;
 
     /** @var int Activities created count */
-    private int $activities_created = 0;
+    private int $activitiescreated = 0;
 
     /** @var int Activities updated count */
-    private int $activities_updated = 0;
+    private int $activitiesupdated = 0;
 
     /** @var int Activities hidden (removed from repo) count */
-    private int $activities_hidden = 0;
+    private int $activitieshidden = 0;
 
     /** @var int Assets uploaded count */
-    private int $assets_uploaded = 0;
+    private int $assetsuploaded = 0;
 
     /**
      * Constructor.
@@ -110,7 +111,7 @@ class engine {
         if (!empty($repostructure['assets'])) {
             $this->assets = new asset_handler($this->course->id, $this->github);
             $assetresult = $this->assets->process_assets($repostructure['assets']);
-            $this->assets_uploaded = $assetresult['uploaded'];
+            $this->assetsuploaded = $assetresult['uploaded'];
             $this->operations = array_merge($this->operations, $assetresult['operations']);
         }
 
@@ -157,19 +158,19 @@ class engine {
         foreach ($tree as $item) {
             $path = $item['path'];
 
-            // course.yaml at root.
+            // Course.yaml at root.
             if ($path === 'course.yaml' && $item['type'] === 'blob') {
                 $structure['course_yaml'] = $path;
                 continue;
             }
 
-            // Asset files: assets/**/*
+            // Asset files: assets/**/*.
             if (preg_match('#^assets/.+$#', $path) && $item['type'] === 'blob') {
                 $structure['assets'][] = $path;
                 continue;
             }
 
-            // Section directories: sections/NN-name/
+            // Section directories: sections/NN-name/.
             if (preg_match('#^sections/([^/]+)$#', $path, $matches) && $item['type'] === 'tree') {
                 $dirname = $matches[1];
                 if (!isset($structure['sections'][$dirname])) {
@@ -178,7 +179,7 @@ class engine {
                 continue;
             }
 
-            // Section yaml: sections/NN-name/section.yaml
+            // Section yaml: sections/NN-name/section.yaml.
             if (preg_match('#^sections/([^/]+)/section\.yaml$#', $path, $matches) && $item['type'] === 'blob') {
                 $dirname = $matches[1];
                 if (!isset($structure['sections'][$dirname])) {
@@ -188,7 +189,7 @@ class engine {
                 continue;
             }
 
-            // HTML files: sections/NN-name/NN-page.html
+            // HTML files: sections/NN-name/NN-page.html.
             if (preg_match('#^sections/([^/]+)/(.+\.html)$#', $path, $matches) && $item['type'] === 'blob') {
                 $dirname = $matches[1];
                 $filename = $matches[2];
@@ -269,9 +270,9 @@ class engine {
             $this->upsert_mapping($sectionpath, null, $section->id, null);
 
             if ($existingmapping) {
-                $this->sections_updated++;
+                $this->sectionsupdated++;
             } else {
-                $this->sections_created++;
+                $this->sectionscreated++;
             }
 
             // Process HTML files in this section.
@@ -330,13 +331,13 @@ class engine {
                     $this->builder->update_page($mapping->cmid, $activityname, $htmlcontent);
                 }
                 $this->upsert_mapping($repopath, $mapping->cmid, null, $contenthash);
-                $this->activities_updated++;
+                $this->activitiesupdated++;
                 $this->log_operation('page_update', $repopath, "updated cmid={$mapping->cmid}");
             } else {
                 // New activity — create based on front matter type.
                 $cmid = $this->builder->create_activity($sectionnum, $activityname, $htmlcontent, $frontmatter);
                 $this->upsert_mapping($repopath, $cmid, null, $contenthash);
-                $this->activities_created++;
+                $this->activitiescreated++;
                 $acttype = $frontmatter['type'] ?? 'page';
                 $this->log_operation("{$acttype}_create", $repopath, "created cmid={$cmid}");
             }
@@ -377,7 +378,7 @@ class engine {
                 $cm = get_coursemodule_from_id('', $mapping->cmid, 0, false, IGNORE_MISSING);
                 if ($cm && $cm->visible) {
                     set_coursemodule_visible($mapping->cmid, 0);
-                    $this->activities_hidden++;
+                    $this->activitieshidden++;
                     $this->log_operation('page_hide', $mapping->repo_path, "hidden cmid={$mapping->cmid}");
                 }
             } catch (\Exception $e) {
@@ -448,23 +449,23 @@ class engine {
     private function build_summary(): string {
         $parts = [];
 
-        if ($this->sections_created > 0) {
-            $parts[] = get_string('sections_created', 'local_githubsync', $this->sections_created);
+        if ($this->sectionscreated > 0) {
+            $parts[] = get_string('sections_created', 'local_githubsync', $this->sectionscreated);
         }
-        if ($this->sections_updated > 0) {
-            $parts[] = get_string('sections_updated', 'local_githubsync', $this->sections_updated);
+        if ($this->sectionsupdated > 0) {
+            $parts[] = get_string('sections_updated', 'local_githubsync', $this->sectionsupdated);
         }
-        if ($this->activities_created > 0) {
-            $parts[] = get_string('activities_created', 'local_githubsync', $this->activities_created);
+        if ($this->activitiescreated > 0) {
+            $parts[] = get_string('activities_created', 'local_githubsync', $this->activitiescreated);
         }
-        if ($this->activities_updated > 0) {
-            $parts[] = get_string('activities_updated', 'local_githubsync', $this->activities_updated);
+        if ($this->activitiesupdated > 0) {
+            $parts[] = get_string('activities_updated', 'local_githubsync', $this->activitiesupdated);
         }
-        if ($this->activities_hidden > 0) {
-            $parts[] = get_string('activities_hidden', 'local_githubsync', $this->activities_hidden);
+        if ($this->activitieshidden > 0) {
+            $parts[] = get_string('activities_hidden', 'local_githubsync', $this->activitieshidden);
         }
-        if ($this->assets_uploaded > 0) {
-            $parts[] = get_string('assets_uploaded', 'local_githubsync', $this->assets_uploaded);
+        if ($this->assetsuploaded > 0) {
+            $parts[] = get_string('assets_uploaded', 'local_githubsync', $this->assetsuploaded);
         }
 
         if (empty($parts)) {
@@ -536,15 +537,17 @@ class engine {
                 $value = trim($matches[2]);
 
                 // Remove surrounding quotes.
-                if ((str_starts_with($value, '"') && str_ends_with($value, '"')) ||
-                    (str_starts_with($value, "'") && str_ends_with($value, "'"))) {
+                if (
+                    (str_starts_with($value, '"') && str_ends_with($value, '"')) ||
+                    (str_starts_with($value, "'") && str_ends_with($value, "'"))
+                ) {
                     $value = substr($value, 1, -1);
                 }
 
                 // Handle booleans.
                 if ($value === 'true') {
                     $value = true;
-                } elseif ($value === 'false') {
+                } else if ($value === 'false') {
                     $value = false;
                 }
 
@@ -568,8 +571,12 @@ class engine {
         }
 
         if (!class_exists('\core\encryption') || !\core\encryption::key_exists()) {
-            throw new \moodle_exception('syncfailed', 'local_githubsync', '',
-                get_string('encryption_required', 'local_githubsync'));
+            throw new \moodle_exception(
+                'syncfailed',
+                'local_githubsync',
+                '',
+                get_string('encryption_required', 'local_githubsync')
+            );
         }
 
         return \core\encryption::encrypt($pat);
@@ -607,8 +614,12 @@ class engine {
 
         // Standard Sodium decryption.
         if (!class_exists('\core\encryption')) {
-            throw new \moodle_exception('syncfailed', 'local_githubsync', '',
-                get_string('encryption_required', 'local_githubsync'));
+            throw new \moodle_exception(
+                'syncfailed',
+                'local_githubsync',
+                '',
+                get_string('encryption_required', 'local_githubsync')
+            );
         }
 
         return \core\encryption::decrypt($encrypted);

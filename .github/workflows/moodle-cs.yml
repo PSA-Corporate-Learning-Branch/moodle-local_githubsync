@@ -1,0 +1,28 @@
+name: Moodle Coding Standards
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  codestyle:
+    name: Moodle PHP CodeSniffer
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: composer install --no-interaction
+
+      - name: Run PHP CodeSniffer
+        run: vendor/bin/phpcs --standard=moodle --extensions=php --ignore=vendor/,phpstan-bootstrap.php .

@@ -23,15 +23,23 @@ require_once($CFG->dirroot . '/course/modlib.php');
 
 /**
  * Handles creating and updating Moodle course structure from repo data.
+ *
+ * @package    local_githubsync
+ * @copyright  2026 Allan Haggett
+ * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class course_builder {
-
     /** @var \stdClass The course object */
     private \stdClass $course;
 
     /** @var array Module IDs from the modules table, keyed by module name */
     private array $moduleids = [];
 
+    /**
+     * Constructor.
+     *
+     * @param \stdClass $course The course record
+     */
     public function __construct(\stdClass $course) {
         global $DB;
         $this->course = $course;
@@ -287,8 +295,12 @@ class course_builder {
             case 'url':
                 $url = $frontmatter['url'] ?? '';
                 if (empty($url)) {
-                    throw new \moodle_exception('syncfailed', 'local_githubsync', '',
-                        "URL activity requires 'url' in front matter");
+                    throw new \moodle_exception(
+                        'syncfailed',
+                        'local_githubsync',
+                        '',
+                        "URL activity requires 'url' in front matter"
+                    );
                 }
                 return $this->create_url($sectionnum, $name, $url, $htmlcontent);
 
@@ -333,15 +345,17 @@ class course_builder {
                 $value = trim($m[2]);
 
                 // Remove surrounding quotes.
-                if ((str_starts_with($value, '"') && str_ends_with($value, '"')) ||
-                    (str_starts_with($value, "'") && str_ends_with($value, "'"))) {
+                if (
+                    (str_starts_with($value, '"') && str_ends_with($value, '"')) ||
+                    (str_starts_with($value, "'") && str_ends_with($value, "'"))
+                ) {
                     $value = substr($value, 1, -1);
                 }
 
                 // Handle booleans.
                 if ($value === 'true') {
                     $value = true;
-                } elseif ($value === 'false') {
+                } else if ($value === 'false') {
                     $value = false;
                 }
 

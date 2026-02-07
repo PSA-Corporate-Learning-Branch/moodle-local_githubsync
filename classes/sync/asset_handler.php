@@ -16,8 +16,6 @@
 
 namespace local_githubsync\sync;
 
-defined('MOODLE_INTERNAL') || die();
-
 use local_githubsync\github\client;
 
 /**
@@ -32,9 +30,12 @@ use local_githubsync\github\client;
  *   filename:  the file name
  *
  * A pluginfile handler in lib.php serves these files.
+ *
+ * @package    local_githubsync
+ * @copyright  2026 Allan Haggett
+ * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class asset_handler {
-
     /** @var array Allowed asset file extensions */
     private const ALLOWED_EXTENSIONS = [
         'css', 'js',
@@ -65,6 +66,12 @@ class asset_handler {
     /** @var int Count of assets skipped (unchanged) */
     private int $skipped = 0;
 
+    /**
+     * Constructor.
+     *
+     * @param int $courseid The course ID
+     * @param client $github GitHub API client
+     */
     public function __construct(int $courseid, client $github) {
         $this->courseid = $courseid;
         $this->context = \context_course::instance($courseid);
@@ -82,7 +89,7 @@ class asset_handler {
         global $DB;
 
         foreach ($assetpaths as $repopath) {
-            // Derive the storage path: assets/css/custom.css -> filepath=/css/, filename=custom.css
+            // Derive the storage path: assets/css/custom.css -> filepath=/css/, filename=custom.css.
             $relpath = preg_replace('#^assets/#', '', $repopath);
             $dirname = dirname($relpath);
             $filename = basename($relpath);
@@ -205,6 +212,8 @@ class asset_handler {
 
     /**
      * Get the operations log.
+     *
+     * @return array The operations log.
      */
     public function get_operations(): array {
         return $this->operations;

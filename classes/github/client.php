@@ -25,9 +25,12 @@ require_once($CFG->libdir . '/filelib.php');
  *
  * Uses the GitHub REST API to fetch repository content without requiring
  * git to be installed on the Moodle server.
+ *
+ * @package    local_githubsync
+ * @copyright  2026 Allan Haggett
+ * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class client {
-
     /** @var string GitHub API base URL */
     private const API_BASE = 'https://api.github.com';
 
@@ -44,10 +47,10 @@ class client {
     private string $pat;
 
     /** @var int Remaining API requests (from X-RateLimit-Remaining header) */
-    private int $ratelimit_remaining = -1;
+    private int $ratelimitremaining = -1;
 
     /** @var int Rate limit reset timestamp */
-    private int $ratelimit_reset = 0;
+    private int $ratelimitreset = 0;
 
     /**
      * Constructor.
@@ -190,8 +193,8 @@ class client {
      */
     public function get_rate_limit_status(): array {
         return [
-            'remaining' => $this->ratelimit_remaining,
-            'reset' => $this->ratelimit_reset,
+            'remaining' => $this->ratelimitremaining,
+            'reset' => $this->ratelimitreset,
         ];
     }
 
@@ -229,17 +232,21 @@ class client {
         // Track rate limit headers.
         $responseheaders = $curl->getResponse();
         if (isset($responseheaders['X-RateLimit-Remaining'])) {
-            $this->ratelimit_remaining = (int) $responseheaders['X-RateLimit-Remaining'];
+            $this->ratelimitremaining = (int) $responseheaders['X-RateLimit-Remaining'];
         }
         if (isset($responseheaders['X-RateLimit-Reset'])) {
-            $this->ratelimit_reset = (int) $responseheaders['X-RateLimit-Reset'];
+            $this->ratelimitreset = (int) $responseheaders['X-RateLimit-Reset'];
         }
 
         // Handle rate limiting.
-        if ($httpcode === 403 && $this->ratelimit_remaining === 0) {
-            $resettime = userdate($this->ratelimit_reset);
-            throw new \moodle_exception('connectionfailed', 'local_githubsync', '',
-                "GitHub API rate limit exceeded. Resets at {$resettime}");
+        if ($httpcode === 403 && $this->ratelimitremaining === 0) {
+            $resettime = userdate($this->ratelimitreset);
+            throw new \moodle_exception(
+                'connectionfailed',
+                'local_githubsync',
+                '',
+                "GitHub API rate limit exceeded. Resets at {$resettime}"
+            );
         }
 
         if ($httpcode >= 400) {

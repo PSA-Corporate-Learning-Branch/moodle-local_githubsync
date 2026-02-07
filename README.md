@@ -300,6 +300,16 @@ composer install
 vendor/bin/phpstan analyse --memory-limit=512M
 ```
 
+### Moodle Coding Standards
+
+[PHP CodeSniffer](https://github.com/squizlabs/PHP_CodeSniffer) with the [moodlehq/moodle-cs](https://github.com/moodlehq/moodle-cs) ruleset enforces Moodle's coding standards — file docblocks, naming conventions, inline comment formatting, and PHPDoc annotations.
+
+**Running locally:**
+```bash
+composer install
+vendor/bin/phpcs --standard=moodle --extensions=php --ignore=vendor/,phpstan-bootstrap.php .
+```
+
 ## File Structure
 
 ```
@@ -335,6 +345,7 @@ local/githubsync/
   .github/workflows/
     semgrep.yml                        # Semgrep OWASP security scan
     phpstan.yml                        # PHPStan static analysis
+    moodle-cs.yml                      # Moodle coding standards
 ```
 
 ## License

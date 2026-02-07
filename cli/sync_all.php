@@ -21,6 +21,9 @@
  *   php local/githubsync/cli/sync_all.php
  *   php local/githubsync/cli/sync_all.php --courseid=9
  *   php local/githubsync/cli/sync_all.php --auto-only
+ * @package    local_githubsync
+ * @copyright  2026 Allan Haggett
+ * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
 define('CLI_SCRIPT', true);
@@ -28,7 +31,7 @@ define('CLI_SCRIPT', true);
 require_once(__DIR__ . '/../../../config.php');
 require_once($CFG->libdir . '/clilib.php');
 
-list($options, $unrecognized) = cli_get_params([
+[$options, $unrecognized] = cli_get_params([
     'courseid' => null,
     'auto-only' => false,
     'help' => false,

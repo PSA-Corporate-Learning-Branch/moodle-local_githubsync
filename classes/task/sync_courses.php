@@ -16,17 +16,26 @@
 
 namespace local_githubsync\task;
 
-defined('MOODLE_INTERNAL') || die();
-
 /**
  * Scheduled task that syncs all courses with auto_sync enabled.
+ *
+ * @package    local_githubsync
+ * @copyright  2026 Allan Haggett
+ * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class sync_courses extends \core\task\scheduled_task {
-
+    /**
+     * Get the name of the scheduled task.
+     *
+     * @return string The task name.
+     */
     public function get_name(): string {
         return get_string('task_sync_courses', 'local_githubsync');
     }
 
+    /**
+     * Execute the scheduled task.
+     */
     public function execute(): void {
         global $DB;
 
