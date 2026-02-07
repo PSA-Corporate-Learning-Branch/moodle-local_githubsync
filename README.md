@@ -171,6 +171,7 @@ Files in the `assets/` directory are uploaded to Moodle's file storage. Referenc
 ### Admin Settings
 
 Visit **Site Administration > Plugins > Local plugins > GitHub Sync** to configure:
+- **Webhook secret** for HMAC-SHA256 signature verification (required for webhooks)
 - Default branch name for new configurations
 - View webhook URL for GitHub integration
 - CLI sync commands
@@ -179,13 +180,16 @@ Visit **Site Administration > Plugins > Local plugins > GitHub Sync** to configu
 
 For immediate sync when content is pushed:
 
-1. In your GitHub repository, go to **Settings > Webhooks > Add webhook**
-2. Set **Payload URL** to: `https://yourmoodle.com/local/githubsync/webhook.php`
-3. Set **Content type** to: `application/json`
-4. Select **Just the push event**
-5. Click **Add webhook**
+1. In Moodle, go to **Site Administration > Plugins > Local plugins > GitHub Sync**
+2. Set a **Webhook secret** (any random string) and save
+3. In your GitHub repository, go to **Settings > Webhooks > Add webhook**
+4. Set **Payload URL** to: `https://yourmoodle.com/local/githubsync/webhook.php`
+5. Set **Content type** to: `application/json`
+6. Set **Secret** to the same value you entered in Moodle
+7. Select **Just the push event**
+8. Click **Add webhook**
 
-The webhook matches the repository URL and branch to find configured courses and syncs them automatically.
+The webhook verifies the HMAC-SHA256 signature, matches the repository URL and branch to find configured courses, and syncs them automatically.
 
 ### Scheduled Auto-Sync
 
@@ -230,10 +234,18 @@ php local/githubsync/cli/sync_all.php --auto-only
 
 ## Security
 
-- **PAT encryption**: Personal Access Tokens are encrypted at rest using Moodle's Sodium-based encryption API (`\core\encryption`). A base64 fallback is used if the encryption key hasn't been set up.
+- **Webhook authentication**: The webhook endpoint requires HMAC-SHA256 signature verification. Configure a shared secret in both Moodle admin settings and your GitHub webhook. Requests without a valid `X-Hub-Signature-256` header are rejected.
+- **PAT encryption**: Personal Access Tokens are encrypted at rest using Moodle's Sodium-based encryption API (`\core\encryption`). Encryption keys must be configured — there is no insecure fallback. Legacy base64-encoded tokens from older versions are automatically migrated to Sodium on first access.
+- **HTML sanitization**: All HTML content from GitHub repositories is passed through `purify_html()` (HTMLPurifier) before storage, stripping `<script>` tags, event handlers, and other XSS vectors.
+- **Asset type allowlist**: Only safe file types (CSS, JS, images, fonts, etc.) are synced from the `assets/` directory. SVG, PHP, and other potentially dangerous file types are blocked.
+- **Input validation**: Repository URLs are validated against a strict anchored regex, branch names are restricted to safe characters, and PATs are validated against GitHub's known token formats.
 - **Capability checks**: All actions require appropriate capabilities in the course context.
-- **Session key validation**: The sync trigger page requires a valid sesskey.
+- **Session key validation**: The sync trigger page requires a valid sesskey (CSRF protection).
+- **No information leakage**: Error messages shown to users are generic; detailed error information is stored in internal logs only. The webhook endpoint returns generic responses regardless of outcome.
+- **No guest access**: Asset files served via `pluginfile.php` require authenticated course enrollment — no guest auto-login.
 - **No git required**: Uses the GitHub REST API only — no git binary needed on the server.
+
+For full security documentation, see [SECURITY.md](SECURITY.md).
 
 ## API Rate Limits
 
@@ -246,6 +258,48 @@ A course with 50 HTML files and 10 assets would use ~62 requests per full sync. 
 
 The plugin tracks rate limit headers and provides a clear error message if the limit is exceeded.
 
+## CI/CD
+
+Every push and pull request to `main` runs two automated checks:
+
+### Semgrep OWASP Security Scan
+
+Static application security testing (SAST) using [Semgrep](https://semgrep.dev/) with 8 community rulesets plus custom Moodle-specific rules.
+
+**Community rulesets:**
+| Ruleset | Coverage |
+|---------|----------|
+| `p/owasp-top-ten` | OWASP Top 10 2021 |
+| `p/php` | PHP-specific security patterns |
+| `p/security-audit` | General security audit |
+| `p/command-injection` | OS command injection |
+| `p/sql-injection` | SQL injection |
+| `p/xss` | Cross-site scripting |
+| `p/secrets` | Hardcoded secrets and credentials |
+| `p/insecure-transport` | HTTP/TLS issues |
+
+**Custom Moodle rules** (`.semgrep.yml`):
+Standard Semgrep rules don't understand Moodle's framework patterns. The custom ruleset catches:
+- Unsanitized HTML stored in `->content`, `->intro`, or `->summary` fields without `purify_html()`
+- Variables echoed without `s()`, `format_text()`, or `html_writer`
+- Direct `$_POST` access bypassing Moodle's `required_param()`/`optional_param()`
+- Direct `$USER = get_admin()` instead of proper session management
+- Base64 encoding used as a substitute for real encryption
+- Stack traces stored in the database (information leakage)
+- `require_course_login()` with guest auto-login enabled
+
+### PHPStan Static Analysis
+
+[PHPStan](https://phpstan.org/) at **level 6** — covers type safety, return types, undefined variables, dead code, and argument type validation.
+
+The CI job checks out Moodle 4.5 stable, places the plugin inside it, and runs PHPStan with a bootstrap that loads Moodle's core classes for full type information.
+
+**Running locally:**
+```bash
+composer install
+vendor/bin/phpstan analyse --memory-limit=512M
+```
+
 ## File Structure
 
 ```
@@ -256,6 +310,9 @@ local/githubsync/
   sync.php                             # Sync trigger page
   webhook.php                          # GitHub webhook endpoint
   settings.php                         # Global admin settings
+  SECURITY.md                          # Security architecture and audit history
+  .semgrep.yml                         # Custom Moodle security rules for Semgrep
+  phpstan.neon                         # PHPStan configuration
   db/
     install.xml                        # Database schema
     access.php                         # Capability definitions
@@ -275,6 +332,9 @@ local/githubsync/
       sync_courses.php                 # Scheduled task for auto-sync
   cli/
     sync_all.php                       # CLI script for bulk sync
+  .github/workflows/
+    semgrep.yml                        # Semgrep OWASP security scan
+    phpstan.yml                        # PHPStan static analysis
 ```
 
 ## License
