@@ -31,7 +31,6 @@ use local_githubsync\sync\engine;
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class update_file extends external_api {
-
     /**
      * Parameters.
      *

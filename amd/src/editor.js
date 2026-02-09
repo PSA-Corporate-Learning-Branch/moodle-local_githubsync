@@ -36,6 +36,25 @@ define(['local_githubsync/repository', 'core/notification', 'core/str'], functio
     var dom = {};
 
     /**
+     * Safely replace all children of an element.
+     *
+     * @param {HTMLElement} el
+     * @param {Array<HTMLElement|String>} children - DOM nodes or strings (inserted as text)
+     */
+    var setChildren = function(el, children) {
+        while (el.firstChild) {
+            el.removeChild(el.firstChild);
+        }
+        children.forEach(function(child) {
+            if (typeof child === 'string') {
+                el.appendChild(document.createTextNode(child));
+            } else {
+                el.appendChild(child);
+            }
+        });
+    };
+
+    /**
      * Check if the editor has unsaved changes.
      *
      * @returns {Boolean}
@@ -243,9 +262,14 @@ define(['local_githubsync/repository', 'core/notification', 'core/str'], functio
      */
     var loadTree = function() {
         Str.get_string('editor_loading', 'local_githubsync').then(function(loadingStr) {
-            dom.tree.innerHTML = '<div class="p-3 text-center text-muted">' +
-                '<div class="spinner-border spinner-border-sm" role="status"></div> ' +
-                loadingStr + '</div>';
+            var wrapper = document.createElement('div');
+            wrapper.className = 'p-3 text-center text-muted';
+            var spinner = document.createElement('div');
+            spinner.className = 'spinner-border spinner-border-sm';
+            spinner.setAttribute('role', 'status');
+            wrapper.appendChild(spinner);
+            wrapper.appendChild(document.createTextNode(' ' + loadingStr));
+            setChildren(dom.tree, [wrapper]);
 
             return Repository.getFileTree(state.courseid);
         }).then(function(result) {
@@ -253,7 +277,10 @@ define(['local_githubsync/repository', 'core/notification', 'core/str'], functio
             renderTree();
         }).catch(function(err) {
             Str.get_string('editor_treefailed', 'local_githubsync').then(function(msg) {
-                dom.tree.innerHTML = '<div class="p-3 text-danger">' + msg + '</div>';
+                var errDiv = document.createElement('div');
+                errDiv.className = 'p-3 text-danger';
+                errDiv.textContent = msg;
+                setChildren(dom.tree, [errDiv]);
             });
             Notification.exception(err);
         });
@@ -290,11 +317,14 @@ define(['local_githubsync/repository', 'core/notification', 'core/str'], functio
                     Notification.addNotification({message: conflictMsg, type: 'error'});
                     return Str.get_string('editor_reload', 'local_githubsync');
                 }).then(function(reloadMsg) {
-                    dom.status.innerHTML = '<a href="#" id="githubsync-reload-link">' + reloadMsg + '</a>';
-                    document.getElementById('githubsync-reload-link').addEventListener('click', function(e) {
+                    var link = document.createElement('a');
+                    link.href = '#';
+                    link.textContent = reloadMsg;
+                    link.addEventListener('click', function(e) {
                         e.preventDefault();
                         loadFile(state.currentPath);
                     });
+                    setChildren(dom.status, [link]);
                 });
             } else if (result.success) {
                 state.currentSha = result.newsha;
@@ -313,7 +343,7 @@ define(['local_githubsync/repository', 'core/notification', 'core/str'], functio
         }).then(function() {
             // Restore button regardless of outcome.
             Str.get_string('editor_save', 'local_githubsync').then(function(saveText) {
-                dom.saveBtn.innerHTML = saveText;
+                dom.saveBtn.textContent = saveText;
                 updateSaveButton();
             });
         });

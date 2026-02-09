@@ -32,7 +32,6 @@ use local_githubsync\sync\engine;
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class get_file_tree extends external_api {
-
     /** @var array File extensions considered binary */
     private const BINARY_EXTENSIONS = [
         'png', 'jpg', 'jpeg', 'gif', 'bmp', 'ico', 'svg', 'webp',
