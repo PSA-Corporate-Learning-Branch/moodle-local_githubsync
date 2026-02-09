@@ -12,6 +12,9 @@ rules:
       - pattern-not: echo html_writer::div(...);
       - pattern-not: echo html_writer::tag(...);
       - pattern-not: echo html_writer::link(...);
+      - pattern-not: echo html_writer::start_div(...);
+      - pattern-not: echo html_writer::end_div();
+      - pattern-not: echo $OUTPUT->render_from_template(...);
     message: >
       Echoing a variable directly may lead to XSS. Use s($var) for plain text,
       format_text() for HTML, or html_writer for structured output.
