@@ -1,0 +1,99 @@
+{{!
+    This file is part of Moodle - http://moodle.org/
+
+    Moodle is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    Moodle is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
+}}
+{{!
+    @template local_githubsync/editor
+
+    Editor layout with file tree and content editor.
+
+    Context variables required by this template:
+    * configurl - URL back to the config page
+    * courseid - The course ID
+
+    Example context (json):
+    {
+        "configurl": "/local/githubsync/config.php?courseid=2",
+        "courseid": 2
+    }
+}}
+<div id="githubsync-editor" class="githubsync-editor">
+    {{! Toolbar }}
+    <div class="d-flex align-items-center mb-3">
+        <a href="{{configurl}}" class="btn btn-secondary btn-sm mr-2">
+            {{#pix}}i/return, core{{/pix}}
+            {{#str}}editor_back, local_githubsync{{/str}}
+        </a>
+        <button type="button" class="btn btn-outline-secondary btn-sm mr-2" id="githubsync-refresh">
+            {{#pix}}i/reload, core{{/pix}}
+            {{#str}}editor_refresh, local_githubsync{{/str}}
+        </button>
+        <span id="githubsync-status" class="text-muted small"></span>
+    </div>
+
+    <div class="row">
+        {{! Left panel: file tree }}
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">{{#str}}editor_files, local_githubsync{{/str}}</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div id="githubsync-file-tree" class="githubsync-file-tree">
+                        <div class="p-3 text-center text-muted">
+                            <div class="spinner-border spinner-border-sm" role="status"></div>
+                            {{#str}}editor_loading, local_githubsync{{/str}}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {{! Right panel: editor }}
+        <div class="col-md-9">
+            <div class="card">
+                <div class="card-header d-flex align-items-center">
+                    <span id="githubsync-filepath" class="font-weight-bold text-monospace">
+                        {{#str}}editor_nofile, local_githubsync{{/str}}
+                    </span>
+                    <span id="githubsync-unsaved-badge" class="badge badge-warning ml-2 d-none">
+                        {{#str}}editor_unsaved, local_githubsync{{/str}}
+                    </span>
+                </div>
+                <div class="card-body">
+                    <div id="githubsync-editor-placeholder" class="text-center text-muted py-5">
+                        <p>{{#str}}editor_selectfile, local_githubsync{{/str}}</p>
+                    </div>
+                    <div id="githubsync-editor-content" class="d-none">
+                        <textarea id="githubsync-textarea" class="githubsync-textarea form-control" rows="25"
+                                  spellcheck="false"></textarea>
+                        <div class="mt-3">
+                            <div class="form-group">
+                                <label for="githubsync-commit-message">
+                                    {{#str}}editor_commitmessage, local_githubsync{{/str}}
+                                </label>
+                                <input type="text" id="githubsync-commit-message" class="form-control"
+                                       placeholder="{{#str}}editor_commitmessage_placeholder, local_githubsync{{/str}}">
+                            </div>
+                            <button type="button" id="githubsync-save-btn" class="btn btn-primary" disabled>
+                                {{#str}}editor_save, local_githubsync{{/str}}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

@@ -199,6 +199,150 @@ class client {
     }
 
     /**
+     * Get file contents including the blob SHA (needed for update operations).
+     *
+     * @param string $path File path within the repository
+     * @return array ['content' => string, 'sha' => string, 'size' => int, 'name' => string, 'path' => string]
+     * @throws \moodle_exception If request fails
+     */
+    public function get_file_content_with_sha(string $path): array {
+        $encodedpath = implode('/', array_map('urlencode', explode('/', $path)));
+        $response = $this->api_request(
+            $this->repo_endpoint('/contents/' . $encodedpath),
+            ['ref' => $this->branch]
+        );
+
+        if (empty($response['content']) && ($response['size'] ?? 0) > 0) {
+            throw new \moodle_exception('syncfailed', 'local_githubsync', '', 'File too large for Contents API');
+        }
+
+        $content = '';
+        if (!empty($response['content'])) {
+            $content = base64_decode($response['content'], true);
+            if ($content === false) {
+                throw new \moodle_exception('syncfailed', 'local_githubsync', '', 'Failed to decode file');
+            }
+        }
+
+        return [
+            'content' => $content,
+            'sha' => $response['sha'],
+            'size' => $response['size'] ?? strlen($content),
+            'name' => $response['name'] ?? basename($path),
+            'path' => $path,
+        ];
+    }
+
+    /**
+     * Update (or create) a file in the repository via the Contents API.
+     *
+     * @param string $path File path within the repository
+     * @param string $content New file content (plain text)
+     * @param string $sha Current blob SHA (for conflict detection)
+     * @param string $message Commit message
+     * @return array ['sha' => newBlobSha, 'commit_sha' => string, 'commit_message' => string]
+     * @throws \moodle_exception If request fails
+     */
+    public function update_file(string $path, string $content, string $sha, string $message): array {
+        $encodedpath = implode('/', array_map('urlencode', explode('/', $path)));
+        $body = [
+            'message' => $message,
+            'content' => base64_encode($content),
+            'sha' => $sha,
+            'branch' => $this->branch,
+        ];
+
+        $response = $this->api_write_request('PUT', $this->repo_endpoint('/contents/' . $encodedpath), $body);
+
+        return [
+            'sha' => $response['content']['sha'] ?? '',
+            'commit_sha' => $response['commit']['sha'] ?? '',
+            'commit_message' => $response['commit']['message'] ?? $message,
+        ];
+    }
+
+    /**
+     * Make an authenticated write request (PUT/POST) to the GitHub API.
+     *
+     * @param string $method HTTP method (PUT or POST)
+     * @param string $endpoint API endpoint path
+     * @param array $body Request body (will be JSON-encoded)
+     * @return array Decoded JSON response
+     * @throws \moodle_exception If request fails
+     */
+    private function api_write_request(string $method, string $endpoint, array $body): array {
+        $url = self::API_BASE . $endpoint;
+
+        $curl = new \curl();
+        $curl->setHeader([
+            'Authorization: token ' . $this->pat,
+            'Accept: application/vnd.github.v3+json',
+            'User-Agent: MoodleGitHubSync/1.0',
+            'Content-Type: application/json',
+        ]);
+
+        $jsonbody = json_encode($body);
+
+        if (strtoupper($method) === 'PUT') {
+            $response = $curl->put($url, $jsonbody);
+        } else {
+            $response = $curl->post($url, $jsonbody);
+        }
+
+        if ($curl->get_errno()) {
+            throw new \moodle_exception('connectionfailed', 'local_githubsync', '', $curl->error);
+        }
+
+        $info = $curl->get_info();
+        $httpcode = $info['http_code'] ?? 0;
+
+        // Track rate limit headers.
+        $responseheaders = $curl->getResponse();
+        if (isset($responseheaders['X-RateLimit-Remaining'])) {
+            $this->ratelimitremaining = (int) $responseheaders['X-RateLimit-Remaining'];
+        }
+        if (isset($responseheaders['X-RateLimit-Reset'])) {
+            $this->ratelimitreset = (int) $responseheaders['X-RateLimit-Reset'];
+        }
+
+        // Handle rate limiting.
+        if ($httpcode === 403 && $this->ratelimitremaining === 0) {
+            $resettime = userdate($this->ratelimitreset);
+            throw new \moodle_exception(
+                'connectionfailed',
+                'local_githubsync',
+                '',
+                "GitHub API rate limit exceeded. Resets at {$resettime}"
+            );
+        }
+
+        // Handle conflict (SHA mismatch).
+        if ($httpcode === 409) {
+            throw new \moodle_exception('editor_conflict', 'local_githubsync');
+        }
+
+        // Handle 403 permission denied (token lacks write scope).
+        if ($httpcode === 403) {
+            $decoded = json_decode($response, true);
+            $message = $decoded['message'] ?? "HTTP 403";
+            throw new \moodle_exception('editor_pat_noaccess', 'local_githubsync', '', $message);
+        }
+
+        if ($httpcode >= 400) {
+            $decoded = json_decode($response, true);
+            $message = $decoded['message'] ?? "HTTP {$httpcode}";
+            throw new \moodle_exception('connectionfailed', 'local_githubsync', '', $message);
+        }
+
+        $decoded = json_decode($response, true);
+        if ($decoded === null && json_last_error() !== JSON_ERROR_NONE) {
+            throw new \moodle_exception('connectionfailed', 'local_githubsync', '', 'Invalid JSON response');
+        }
+
+        return $decoded;
+    }
+
+    /**
      * Make an authenticated request to the GitHub API.
      *
      * @param string $endpoint API endpoint path (e.g. /repos/owner/repo)

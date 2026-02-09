@@ -60,6 +60,22 @@ function local_githubsync_extend_settings_navigation(settings_navigation $settin
         'local_githubsync',
         new pix_icon('i/repository', '')
     );
+
+    // Add File Editor child node if config exists for this course.
+    global $DB;
+    if (has_capability('local/githubsync:configure', $context)) {
+        $config = $DB->get_record('local_githubsync_config', ['courseid' => $courseid]);
+        if ($config) {
+            $node->add(
+                get_string('editor_title', 'local_githubsync'),
+                new moodle_url('/local/githubsync/editor.php', ['courseid' => $courseid]),
+                navigation_node::TYPE_SETTING,
+                null,
+                'local_githubsync_editor',
+                new pix_icon('i/edit', '')
+            );
+        }
+    }
 }
 
 /**

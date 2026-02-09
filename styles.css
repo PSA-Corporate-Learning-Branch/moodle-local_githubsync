@@ -1,0 +1,77 @@
+/* File tree */
+.githubsync-file-tree {
+    max-height: 600px;
+    overflow-y: auto;
+    font-size: 0.875rem;
+}
+
+.githubsync-file-tree ul {
+    list-style: none;
+    padding-left: 1.2em;
+    margin: 0;
+}
+
+.githubsync-file-tree > ul {
+    padding-left: 0.5em;
+    padding-top: 0.25em;
+    padding-bottom: 0.25em;
+}
+
+.githubsync-tree-item {
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 3px;
+    white-space: nowrap;
+    user-select: none;
+}
+
+.githubsync-tree-item:hover {
+    background-color: rgba(0, 0, 0, 0.05);
+}
+
+.githubsync-tree-file.active {
+    background-color: #0d6efd;
+    color: #fff;
+}
+
+.githubsync-tree-file.binary {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.githubsync-tree-dir > .githubsync-tree-item::before {
+    content: "\25B6";
+    display: inline-block;
+    width: 1em;
+    font-size: 0.6em;
+    vertical-align: middle;
+    transition: transform 0.15s;
+    margin-right: 2px;
+}
+
+.githubsync-tree-dir.expanded > .githubsync-tree-item::before {
+    transform: rotate(90deg);
+}
+
+.githubsync-tree-dir > ul {
+    display: none;
+}
+
+.githubsync-tree-dir.expanded > ul {
+    display: block;
+}
+
+/* Editor textarea */
+.githubsync-textarea {
+    font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    tab-size: 4;
+    resize: vertical;
+    border-radius: 0;
+}
+
+/* Status badges */
+#githubsync-unsaved-badge {
+    font-size: 0.75rem;
+}

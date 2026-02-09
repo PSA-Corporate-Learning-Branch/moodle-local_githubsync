@@ -73,3 +73,26 @@ $string['syncsuccess'] = 'Sync completed successfully. Commit {$a->sha}: {$a->su
 $string['syncuptodate'] = 'Already up to date (commit {$a}).';
 $string['task_sync_courses'] = 'GitHub Sync: Auto-sync courses';
 $string['testconnection'] = 'Test Connection';
+
+// Editor strings.
+$string['editor_title'] = 'File Editor';
+$string['editor_back'] = 'Back to settings';
+$string['editor_refresh'] = 'Refresh';
+$string['editor_files'] = 'Files';
+$string['editor_loading'] = 'Loading...';
+$string['editor_nofile'] = 'No file selected';
+$string['editor_selectfile'] = 'Select a file from the tree to view and edit its contents.';
+$string['editor_unsaved'] = 'Unsaved changes';
+$string['editor_commitmessage'] = 'Commit message';
+$string['editor_commitmessage_placeholder'] = 'Describe your changes...';
+$string['editor_save'] = 'Save &amp; commit';
+$string['editor_saving'] = 'Saving...';
+$string['editor_saved'] = 'Saved successfully (commit {$a}).';
+$string['editor_conflict'] = 'This file has been modified by someone else. Please reload the file and try again.';
+$string['editor_unsaved_confirm'] = 'You have unsaved changes. Are you sure you want to leave?';
+$string['editor_binary'] = 'Binary file (not editable)';
+$string['editor_empty_message'] = 'Please enter a commit message.';
+$string['editor_loadfailed'] = 'Failed to load file content.';
+$string['editor_treefailed'] = 'Failed to load file tree.';
+$string['editor_reload'] = 'Reload file';
+$string['editor_pat_noaccess'] = 'Your GitHub Personal Access Token does not have write permission. For fine-grained tokens, set Contents permission to "Read and write". For classic tokens, ensure the "repo" scope is enabled. GitHub said: {$a}';

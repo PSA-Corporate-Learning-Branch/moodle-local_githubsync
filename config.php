@@ -109,16 +109,23 @@ echo $OUTPUT->heading(get_string('config', 'local_githubsync'));
 
 $form->display();
 
-// Show sync button if config exists and user has sync capability.
+// Show sync and editor buttons if config exists.
 $config = $DB->get_record('local_githubsync_config', ['courseid' => $courseid]);
-if ($config && has_capability('local/githubsync:sync', $context)) {
-    $syncurl = new moodle_url('/local/githubsync/sync.php', ['courseid' => $courseid, 'sesskey' => sesskey()]);
-    echo html_writer::div(
-        html_writer::link($syncurl, get_string('sync', 'local_githubsync'), [
-            'class' => 'btn btn-primary mt-3',
-        ]),
-        'mt-3'
-    );
+if ($config) {
+    echo html_writer::start_div('mt-3');
+    if (has_capability('local/githubsync:sync', $context)) {
+        $syncurl = new moodle_url('/local/githubsync/sync.php', ['courseid' => $courseid, 'sesskey' => sesskey()]);
+        echo html_writer::link($syncurl, get_string('sync', 'local_githubsync'), [
+            'class' => 'btn btn-primary mt-3 mr-2',
+        ]);
+    }
+    if (has_capability('local/githubsync:configure', $context)) {
+        $editorurl = new moodle_url('/local/githubsync/editor.php', ['courseid' => $courseid]);
+        echo html_writer::link($editorurl, get_string('editor_title', 'local_githubsync'), [
+            'class' => 'btn btn-outline-primary mt-3',
+        ]);
+    }
+    echo html_writer::end_div();
 }
 
 // Show recent sync history.
