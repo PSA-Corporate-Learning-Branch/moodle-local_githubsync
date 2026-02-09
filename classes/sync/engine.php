@@ -62,6 +62,15 @@ class engine {
     /** @var int Activities hidden (removed from repo) count */
     private int $activitieshidden = 0;
 
+    /** @var int Chapters created count */
+    private int $chapterscreated = 0;
+
+    /** @var int Chapters updated count */
+    private int $chaptersupdated = 0;
+
+    /** @var int Chapters hidden count */
+    private int $chaptershidden = 0;
+
     /** @var int Assets uploaded count */
     private int $assetsuploaded = 0;
 
@@ -174,7 +183,7 @@ class engine {
             if (preg_match('#^sections/([^/]+)$#', $path, $matches) && $item['type'] === 'tree') {
                 $dirname = $matches[1];
                 if (!isset($structure['sections'][$dirname])) {
-                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => []];
+                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => [], 'books' => []];
                 }
                 continue;
             }
@@ -183,18 +192,61 @@ class engine {
             if (preg_match('#^sections/([^/]+)/section\.yaml$#', $path, $matches) && $item['type'] === 'blob') {
                 $dirname = $matches[1];
                 if (!isset($structure['sections'][$dirname])) {
-                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => []];
+                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => [], 'books' => []];
                 }
                 $structure['sections'][$dirname]['yaml'] = $path;
                 continue;
             }
 
-            // HTML files: sections/NN-name/NN-page.html.
-            if (preg_match('#^sections/([^/]+)/(.+\.html)$#', $path, $matches) && $item['type'] === 'blob') {
+            // Book directories: sections/NN-name/NN-bookname/ (subdirectory = book).
+            if (preg_match('#^sections/([^/]+)/([^/]+)$#', $path, $matches) && $item['type'] === 'tree') {
+                $dirname = $matches[1];
+                $bookdir = $matches[2];
+                if (!isset($structure['sections'][$dirname])) {
+                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => [], 'books' => []];
+                }
+                if (!isset($structure['sections'][$dirname]['books'][$bookdir])) {
+                    $structure['sections'][$dirname]['books'][$bookdir] = ['yaml' => null, 'chapters' => []];
+                }
+                continue;
+            }
+
+            // Book yaml: sections/NN-name/NN-bookname/book.yaml.
+            if (preg_match('#^sections/([^/]+)/([^/]+)/book\.yaml$#', $path, $matches) && $item['type'] === 'blob') {
+                $dirname = $matches[1];
+                $bookdir = $matches[2];
+                if (!isset($structure['sections'][$dirname])) {
+                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => [], 'books' => []];
+                }
+                if (!isset($structure['sections'][$dirname]['books'][$bookdir])) {
+                    $structure['sections'][$dirname]['books'][$bookdir] = ['yaml' => null, 'chapters' => []];
+                }
+                $structure['sections'][$dirname]['books'][$bookdir]['yaml'] = $path;
+                continue;
+            }
+
+            // Chapter files: sections/NN-name/NN-bookname/NN-chapter.html.
+            if (preg_match('#^sections/([^/]+)/([^/]+)/([^/]+\.html)$#', $path, $matches)
+                    && $item['type'] === 'blob') {
+                $dirname = $matches[1];
+                $bookdir = $matches[2];
+                $chapterfile = $matches[3];
+                if (!isset($structure['sections'][$dirname])) {
+                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => [], 'books' => []];
+                }
+                if (!isset($structure['sections'][$dirname]['books'][$bookdir])) {
+                    $structure['sections'][$dirname]['books'][$bookdir] = ['yaml' => null, 'chapters' => []];
+                }
+                $structure['sections'][$dirname]['books'][$bookdir]['chapters'][$chapterfile] = $path;
+                continue;
+            }
+
+            // HTML files in section (not nested in subdirectory): sections/NN-name/NN-page.html.
+            if (preg_match('#^sections/([^/]+)/([^/]+\.html)$#', $path, $matches) && $item['type'] === 'blob') {
                 $dirname = $matches[1];
                 $filename = $matches[2];
                 if (!isset($structure['sections'][$dirname])) {
-                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => []];
+                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => [], 'books' => []];
                 }
                 $structure['sections'][$dirname]['pages'][$filename] = $path;
                 continue;
@@ -204,9 +256,13 @@ class engine {
         // Sort sections by directory name (numeric prefix gives correct order).
         ksort($structure['sections']);
 
-        // Sort pages within each section.
+        // Sort pages and books within each section, and chapters within each book.
         foreach ($structure['sections'] as &$section) {
             ksort($section['pages']);
+            ksort($section['books']);
+            foreach ($section['books'] as &$book) {
+                ksort($book['chapters']);
+            }
         }
 
         return $structure;
@@ -278,6 +334,12 @@ class engine {
             // Process HTML files in this section.
             $pagepaths = $this->process_section_pages($sectionnum, $sectiondata['pages']);
             $currentpaths = array_merge($currentpaths, $pagepaths);
+
+            // Process book directories in this section.
+            if (!empty($sectiondata['books'])) {
+                $bookpaths = $this->process_section_books($sectionnum, $dirname, $sectiondata['books']);
+                $currentpaths = array_merge($currentpaths, $bookpaths);
+            }
         }
 
         return $currentpaths;
@@ -347,6 +409,253 @@ class engine {
     }
 
     /**
+     * Process book directories within a section.
+     *
+     * @param int $sectionnum Section number
+     * @param string $sectiondirname Section directory name (e.g. "01-introduction")
+     * @param array $books Associative array of bookdir => ['yaml' => path|null, 'chapters' => [filename => path]]
+     * @return array List of all repo_paths tracked (book dir + yaml + chapter files)
+     */
+    private function process_section_books(int $sectionnum, string $sectiondirname, array $books): array {
+        global $DB;
+
+        $paths = [];
+
+        foreach ($books as $bookdir => $bookdata) {
+            $bookdirpath = "sections/{$sectiondirname}/{$bookdir}";
+            $paths[] = $bookdirpath;
+
+            if (!empty($bookdata['yaml'])) {
+                $paths[] = $bookdata['yaml'];
+            }
+
+            // Add all chapter file paths.
+            foreach ($bookdata['chapters'] as $chapterfile => $chapterpath) {
+                $paths[] = $chapterpath;
+            }
+
+            // Check if this book already exists via mapping.
+            $mapping = $DB->get_record('local_githubsync_mapping', [
+                'courseid' => $this->course->id,
+                'repo_path' => $bookdirpath,
+            ]);
+
+            if ($mapping && !empty($mapping->cmid)) {
+                $this->update_existing_book($sectionnum, $bookdir, $bookdirpath, $bookdata, $mapping);
+            } else {
+                $this->create_new_book($sectionnum, $bookdir, $bookdirpath, $bookdata);
+            }
+        }
+
+        return $paths;
+    }
+
+    /**
+     * Create a new book activity from a book directory.
+     *
+     * @param int $sectionnum Section number
+     * @param string $bookdir Book directory name
+     * @param string $bookdirpath Full repo path to book directory
+     * @param array $bookdata Book data: ['yaml' => path|null, 'chapters' => [filename => path]]
+     */
+    private function create_new_book(int $sectionnum, string $bookdir, string $bookdirpath, array $bookdata): void {
+        // Parse book.yaml if present.
+        $bookmeta = [];
+        $yamlhash = null;
+        if (!empty($bookdata['yaml'])) {
+            $yamlcontent = $this->github->get_file_contents($bookdata['yaml']);
+            $bookmeta = $this->parse_yaml($yamlcontent);
+            $yamlhash = sha1($yamlcontent);
+        }
+
+        // Derive book name from directory if not in yaml.
+        $bookname = !empty($bookmeta['title']) ? $bookmeta['title'] : course_builder::derive_activity_name($bookdir);
+
+        // Fetch and parse all chapter files.
+        $chapters = [];
+        $chapterhashes = [];
+        foreach ($bookdata['chapters'] as $chapterfile => $chapterpath) {
+            $rawcontent = $this->github->get_file_contents($chapterpath);
+            $parsed = course_builder::parse_front_matter($rawcontent);
+            $frontmatter = $parsed['frontmatter'];
+            $htmlcontent = $parsed['content'];
+
+            // Rewrite asset URLs if asset handler is active.
+            if ($this->assets) {
+                $htmlcontent = $this->assets->rewrite_asset_urls($htmlcontent);
+            }
+
+            $chaptertitle = $frontmatter['title'] ?? course_builder::derive_activity_name($chapterfile);
+            $subchapter = !empty($frontmatter['subchapter']);
+
+            $chapters[] = [
+                'title' => $chaptertitle,
+                'content' => $htmlcontent,
+                'subchapter' => $subchapter,
+                'importsrc' => $chapterpath,
+            ];
+            $chapterhashes[$chapterpath] = sha1($htmlcontent);
+        }
+
+        if (empty($chapters)) {
+            $this->log_operation('book_skip', $bookdirpath, 'no chapters found');
+            return;
+        }
+
+        // Create the book activity with all chapters.
+        $cmid = $this->builder->create_book($sectionnum, $bookname, $chapters, $bookmeta);
+
+        // Create mapping for the book directory.
+        $this->upsert_mapping($bookdirpath, $cmid, null, $yamlhash);
+
+        // Create mapping rows for each chapter file.
+        foreach ($chapterhashes as $chapterpath => $hash) {
+            $this->upsert_mapping($chapterpath, $cmid, null, $hash);
+        }
+
+        // Create mapping for book.yaml if present.
+        if (!empty($bookdata['yaml'])) {
+            $this->upsert_mapping($bookdata['yaml'], $cmid, null, $yamlhash);
+        }
+
+        $this->activitiescreated++;
+        $this->chapterscreated += count($chapters);
+        $this->log_operation('book_create', $bookdirpath,
+            "created cmid={$cmid} with " . count($chapters) . " chapters");
+    }
+
+    /**
+     * Update an existing book activity.
+     *
+     * @param int $sectionnum Section number
+     * @param string $bookdir Book directory name
+     * @param string $bookdirpath Full repo path to book directory
+     * @param array $bookdata Book data: ['yaml' => path|null, 'chapters' => [filename => path]]
+     * @param \stdClass $mapping Existing mapping record for the book directory
+     */
+    private function update_existing_book(int $sectionnum, string $bookdir, string $bookdirpath,
+            array $bookdata, \stdClass $mapping): void {
+        global $DB;
+
+        $cmid = (int) $mapping->cmid;
+        $bookchanged = false;
+
+        // Check book.yaml for metadata changes.
+        if (!empty($bookdata['yaml'])) {
+            $yamlcontent = $this->github->get_file_contents($bookdata['yaml']);
+            $yamlhash = sha1($yamlcontent);
+
+            // Check if yaml mapping exists and if hash changed.
+            $yamlmapping = $DB->get_record('local_githubsync_mapping', [
+                'courseid' => $this->course->id,
+                'repo_path' => $bookdata['yaml'],
+            ]);
+
+            if (!$yamlmapping || $yamlmapping->content_hash !== $yamlhash) {
+                $bookmeta = $this->parse_yaml($yamlcontent);
+                $this->builder->update_book_metadata($cmid, $bookmeta);
+                $this->upsert_mapping($bookdata['yaml'], $cmid, null, $yamlhash);
+                $bookchanged = true;
+                $this->log_operation('book_meta_update', $bookdata['yaml'], "updated book metadata cmid={$cmid}");
+            }
+        }
+
+        // Get the book instance ID.
+        $cm = get_coursemodule_from_id('book', $cmid, 0, false, IGNORE_MISSING);
+        if (!$cm) {
+            $this->log_operation('book_error', $bookdirpath, "cmid={$cmid} not found, skipping");
+            return;
+        }
+        $bookid = (int) $cm->instance;
+
+        // Process each chapter file.
+        $pagenum = 0;
+        $currentimportsrcs = [];
+
+        foreach ($bookdata['chapters'] as $chapterfile => $chapterpath) {
+            $pagenum++;
+            $currentimportsrcs[] = $chapterpath;
+
+            $rawcontent = $this->github->get_file_contents($chapterpath);
+            $parsed = course_builder::parse_front_matter($rawcontent);
+            $frontmatter = $parsed['frontmatter'];
+            $htmlcontent = $parsed['content'];
+
+            if ($this->assets) {
+                $htmlcontent = $this->assets->rewrite_asset_urls($htmlcontent);
+            }
+
+            $contenthash = sha1($htmlcontent);
+            $chaptertitle = $frontmatter['title'] ?? course_builder::derive_activity_name($chapterfile);
+            $subchapter = !empty($frontmatter['subchapter']) && $pagenum > 1;
+
+            // Check existing chapter mapping.
+            $chaptermapping = $DB->get_record('local_githubsync_mapping', [
+                'courseid' => $this->course->id,
+                'repo_path' => $chapterpath,
+            ]);
+
+            if ($chaptermapping && $chaptermapping->content_hash === $contenthash) {
+                // Content unchanged — but still update pagenum in case ordering changed.
+                $existingchapter = $DB->get_record('book_chapters',
+                    ['bookid' => $bookid, 'importsrc' => $chapterpath]);
+                if ($existingchapter && (int) $existingchapter->pagenum !== $pagenum) {
+                    $existingchapter->pagenum = $pagenum;
+                    $existingchapter->timemodified = time();
+                    $DB->update_record('book_chapters', $existingchapter);
+                    $bookchanged = true;
+                }
+                continue;
+            }
+
+            // Chapter content changed or is new.
+            $updated = $this->builder->update_book_chapter($bookid, $chapterpath, $chaptertitle,
+                $htmlcontent, $subchapter, $pagenum);
+
+            if ($updated) {
+                $this->upsert_mapping($chapterpath, $cmid, null, $contenthash);
+                $this->chaptersupdated++;
+                $bookchanged = true;
+                $this->log_operation('chapter_update', $chapterpath, "updated in book cmid={$cmid}");
+            } else {
+                // New chapter — create it.
+                $this->builder->create_book_chapter($bookid, $chaptertitle, $htmlcontent,
+                    $subchapter, $pagenum, $chapterpath);
+                $this->upsert_mapping($chapterpath, $cmid, null, $contenthash);
+                $this->chapterscreated++;
+                $bookchanged = true;
+                $this->log_operation('chapter_create', $chapterpath, "added to book cmid={$cmid}");
+            }
+        }
+
+        // Hide chapters whose importsrc is no longer in the chapter list.
+        $existingchapters = $DB->get_records('book_chapters', ['bookid' => $bookid]);
+        foreach ($existingchapters as $chapter) {
+            if (!empty($chapter->importsrc) && !in_array($chapter->importsrc, $currentimportsrcs)
+                    && !$chapter->hidden) {
+                $chapter->hidden = 1;
+                $chapter->timemodified = time();
+                $DB->update_record('book_chapters', $chapter);
+                $this->chaptershidden++;
+                $bookchanged = true;
+                $this->log_operation('chapter_hide', $chapter->importsrc, "hidden in book cmid={$cmid}");
+            }
+        }
+
+        // Bump book revision and preload chapters if anything changed.
+        if ($bookchanged) {
+            $book = $DB->get_record('book', ['id' => $bookid], '*', MUST_EXIST);
+            $book->revision++;
+            $book->timemodified = time();
+            $DB->update_record('book', $book);
+            book_preload_chapters($book);
+
+            $this->activitiesupdated++;
+            $this->log_operation('book_update', $bookdirpath, "updated book cmid={$cmid}");
+        }
+    }
+
+    /**
      * Detect files that were removed from the repo and hide corresponding activities.
      *
      * @param array $currentpaths All repo paths currently in the repo
@@ -370,6 +679,11 @@ class engine {
 
             // Skip asset paths (handled separately).
             if (str_starts_with($mapping->repo_path, 'assets/')) {
+                continue;
+            }
+
+            // Skip chapter-level mapping rows — these are managed inside update_existing_book().
+            if (preg_match('#^sections/[^/]+/[^/]+/.+\.html$#', $mapping->repo_path)) {
                 continue;
             }
 
@@ -463,6 +777,15 @@ class engine {
         }
         if ($this->activitieshidden > 0) {
             $parts[] = get_string('activities_hidden', 'local_githubsync', $this->activitieshidden);
+        }
+        if ($this->chapterscreated > 0) {
+            $parts[] = get_string('chapters_created', 'local_githubsync', $this->chapterscreated);
+        }
+        if ($this->chaptersupdated > 0) {
+            $parts[] = get_string('chapters_updated', 'local_githubsync', $this->chaptersupdated);
+        }
+        if ($this->chaptershidden > 0) {
+            $parts[] = get_string('chapters_hidden', 'local_githubsync', $this->chaptershidden);
         }
         if ($this->assetsuploaded > 0) {
             $parts[] = get_string('assets_uploaded', 'local_githubsync', $this->assetsuploaded);

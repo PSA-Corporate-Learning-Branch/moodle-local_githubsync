@@ -6,7 +6,7 @@ A Moodle local plugin that syncs course content from a GitHub repository. Conten
 
 - **One-click sync** from a GitHub repository into a Moodle course
 - **Automatic section creation** based on directory structure
-- **Page, Label, and URL activities** created from HTML files
+- **Page, Label, URL, and Book activities** created from HTML files and directories
 - **YAML front matter** support for controlling activity types
 - **Asset management** — CSS, images, and JS uploaded to Moodle file storage with automatic URL rewriting
 - **Incremental sync** — only changed files are updated (content hash tracking)
@@ -44,8 +44,13 @@ sections/
   01-introduction/
     section.yaml                   # Section title and summary (optional)
     01-welcome.html                # -> Page activity "Welcome"
-    02-overview.html               # -> Page activity "Overview"
-    03-notice.html                 # -> Label activity (with front matter)
+    02-course-handbook/            # -> Book activity "Course Handbook"
+      book.yaml                    # Optional: title, numbering, intro
+      01-getting-started.html      # -> Chapter 1
+      02-assessment-guide.html     # -> Chapter 2
+      03-resources.html            # -> Chapter 3
+    03-overview.html               # -> Page activity "Overview"
+    04-notice.html                 # -> Label activity (with front matter)
   02-module-one/
     section.yaml
     01-lesson.html
@@ -117,10 +122,67 @@ url: "https://docs.moodle.org"
 **Supported front matter fields:**
 | Field | Description |
 |-------|-------------|
-| `type` | Activity type: `page` (default), `label`, `url` |
+| `type` | Activity type: `page` (default), `label`, or `url`. Books are created from directories, not front matter. Other Moodle activity types (quiz, forum, assign, etc.) are not yet implemented. Unrecognized types are treated as `page`. |
 | `name` | Override the activity name (otherwise derived from filename) |
 | `url` | External URL (required for `type: url`) |
 | `visible` | `true` or `false` |
+
+### Book Activities
+
+A subdirectory inside a section directory becomes a **Book** activity. Each `.html` file in the subdirectory becomes a chapter, ordered by numeric prefix. This maps one directory to one Moodle book module.
+
+```
+sections/
+  01-introduction/
+    02-course-handbook/              # -> Book "Course Handbook"
+      book.yaml                      # Optional metadata
+      01-getting-started.html        # -> Chapter 1 "Getting Started"
+      02-assessment-guide.html       # -> Chapter 2 "Assessment Guide"
+      03-resources.html              # -> Chapter 3 "Resources"
+```
+
+#### book.yaml
+
+Optional. Sets book-level metadata:
+
+```yaml
+title: "Course Handbook"
+numbering: bullets
+intro: "<p>Reference handbook for this course.</p>"
+```
+
+| Field | Description |
+|-------|-------------|
+| `title` | Override the book name (otherwise derived from directory name) |
+| `numbering` | Chapter numbering style: `none`, `numbers` (default), `bullets`, or `indented` |
+| `intro` | HTML description shown on the book's intro page |
+
+#### Chapter Front Matter
+
+Chapter HTML files support YAML front matter for per-chapter settings:
+
+```html
+---
+title: "Getting Started Guide"
+subchapter: true
+---
+<h2>Welcome</h2>
+<p>This chapter covers...</p>
+```
+
+| Field | Description |
+|-------|-------------|
+| `title` | Override the chapter title (otherwise derived from filename) |
+| `subchapter` | `true` to make this a sub-chapter (indented under the previous chapter). The first chapter in a book cannot be a subchapter. |
+
+#### Sync Behavior for Books
+
+- **New book directory**: Creates the book activity and all chapters in one operation
+- **Modified chapter**: Only the changed chapter is updated (content hash tracking)
+- **New chapter file**: Added at the correct position based on filename ordering
+- **Removed chapter file**: The chapter is hidden (not deleted), matching the behavior for removed pages
+- **Modified book.yaml**: Updates book name, numbering, and intro without touching chapters
+- **Reordered chapters** (renamed with different numeric prefixes): Page numbers are updated even if content is unchanged
 
 ### Assets
 

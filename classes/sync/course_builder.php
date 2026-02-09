@@ -21,6 +21,7 @@ defined('MOODLE_INTERNAL') || die();
 require_once($CFG->dirroot . '/course/lib.php');
 require_once($CFG->dirroot . '/course/modlib.php');
 require_once($CFG->dirroot . '/lib/resourcelib.php');
+require_once($CFG->dirroot . '/mod/book/locallib.php');
 
 /**
  * Handles creating and updating Moodle course structure from repo data.
@@ -46,7 +47,7 @@ class course_builder {
         $this->course = $course;
 
         // Cache module IDs for the types we support.
-        foreach (['page', 'label', 'url'] as $modname) {
+        foreach (['page', 'label', 'url', 'book'] as $modname) {
             $id = $DB->get_field('modules', 'id', ['name' => $modname]);
             if ($id) {
                 $this->moduleids[$modname] = (int) $id;
@@ -268,6 +269,177 @@ class course_builder {
         $result = add_moduleinfo($moduleinfo, $this->course);
 
         return $result->coursemodule;
+    }
+
+    /**
+     * Create a Book activity with chapters.
+     *
+     * @param int $sectionnum Section number
+     * @param string $name Book name
+     * @param array $chapters Ordered array of chapter data: ['title', 'content', 'subchapter', 'importsrc']
+     * @param array $bookmeta Optional book metadata from book.yaml (numbering, intro)
+     * @return int The course module ID (cmid)
+     */
+    public function create_book(int $sectionnum, string $name, array $chapters, array $bookmeta = []): int {
+        global $DB;
+
+        if (empty($this->moduleids['book'])) {
+            throw new \moodle_exception('syncfailed', 'local_githubsync', '', 'Book module not available');
+        }
+
+        // Map numbering string values to book constants.
+        $numberingmap = ['none' => 0, 'numbers' => 1, 'bullets' => 2, 'indented' => 3];
+        $numbering = 0;
+        if (!empty($bookmeta['numbering']) && isset($numberingmap[$bookmeta['numbering']])) {
+            $numbering = $numberingmap[$bookmeta['numbering']];
+        }
+
+        $moduleinfo = new \stdClass();
+        $moduleinfo->modulename = 'book';
+        $moduleinfo->module = $this->moduleids['book'];
+        $moduleinfo->name = !empty($bookmeta['title']) ? $bookmeta['title'] : $name;
+        $moduleinfo->section = $sectionnum;
+        $moduleinfo->visible = 1;
+        $moduleinfo->visibleoncoursepage = 1;
+
+        $moduleinfo->intro = purify_html($bookmeta['intro'] ?? '');
+        $moduleinfo->introformat = FORMAT_HTML;
+        $moduleinfo->numbering = $numbering;
+        $moduleinfo->navstyle = 1;
+        $moduleinfo->customtitles = 0;
+
+        $result = add_moduleinfo($moduleinfo, $this->course);
+        $cmid = $result->coursemodule;
+
+        // Get the book instance ID.
+        $cm = get_coursemodule_from_id('book', $cmid, 0, false, MUST_EXIST);
+        $bookid = $cm->instance;
+
+        // Insert chapters.
+        $pagenum = 0;
+        foreach ($chapters as $chapter) {
+            $pagenum++;
+            $rec = new \stdClass();
+            $rec->bookid = $bookid;
+            $rec->pagenum = $pagenum;
+            $rec->subchapter = ($pagenum === 1) ? 0 : (!empty($chapter['subchapter']) ? 1 : 0);
+            $rec->title = $chapter['title'];
+            $rec->content = purify_html($chapter['content']);
+            $rec->contentformat = FORMAT_HTML;
+            $rec->hidden = 0;
+            $rec->importsrc = $chapter['importsrc'] ?? '';
+            $rec->timecreated = time();
+            $rec->timemodified = time();
+            $DB->insert_record('book_chapters', $rec);
+        }
+
+        // Preload chapters to validate structure.
+        $book = $DB->get_record('book', ['id' => $bookid], '*', MUST_EXIST);
+        book_preload_chapters($book);
+
+        return $cmid;
+    }
+
+    /**
+     * Update book metadata (name, numbering, intro) from book.yaml.
+     *
+     * @param int $cmid Course module ID of the book
+     * @param array $bookmeta Parsed book.yaml data
+     */
+    public function update_book_metadata(int $cmid, array $bookmeta): void {
+        global $DB;
+
+        $cm = get_coursemodule_from_id('book', $cmid, 0, false, MUST_EXIST);
+        $book = $DB->get_record('book', ['id' => $cm->instance], '*', MUST_EXIST);
+
+        $numberingmap = ['none' => 0, 'numbers' => 1, 'bullets' => 2, 'indented' => 3];
+        $changed = false;
+
+        if (!empty($bookmeta['title']) && $bookmeta['title'] !== $book->name) {
+            $book->name = $bookmeta['title'];
+            $changed = true;
+        }
+        if (!empty($bookmeta['numbering']) && isset($numberingmap[$bookmeta['numbering']])) {
+            $newnumbering = $numberingmap[$bookmeta['numbering']];
+            if ($newnumbering !== (int) $book->numbering) {
+                $book->numbering = $newnumbering;
+                $changed = true;
+            }
+        }
+        if (isset($bookmeta['intro'])) {
+            $newintro = purify_html($bookmeta['intro']);
+            if ($newintro !== $book->intro) {
+                $book->intro = $newintro;
+                $book->introformat = FORMAT_HTML;
+                $changed = true;
+            }
+        }
+
+        if ($changed) {
+            $book->timemodified = time();
+            $DB->update_record('book', $book);
+            rebuild_course_cache($this->course->id, true);
+        }
+    }
+
+    /**
+     * Update an existing book chapter found by importsrc.
+     *
+     * @param int $bookid Book instance ID
+     * @param string $importsrc The repo path stored in importsrc
+     * @param string $title Chapter title
+     * @param string $content Chapter HTML content
+     * @param bool $subchapter Whether this is a subchapter
+     * @param int $pagenum New page number
+     * @return bool True if found and updated
+     */
+    public function update_book_chapter(int $bookid, string $importsrc, string $title,
+            string $content, bool $subchapter, int $pagenum): bool {
+        global $DB;
+
+        $chapter = $DB->get_record('book_chapters', ['bookid' => $bookid, 'importsrc' => $importsrc]);
+        if (!$chapter) {
+            return false;
+        }
+
+        $chapter->title = $title;
+        $chapter->content = purify_html($content);
+        $chapter->contentformat = FORMAT_HTML;
+        $chapter->subchapter = $subchapter ? 1 : 0;
+        $chapter->pagenum = $pagenum;
+        $chapter->hidden = 0;
+        $chapter->timemodified = time();
+        $DB->update_record('book_chapters', $chapter);
+
+        return true;
+    }
+
+    /**
+     * Create a new chapter in an existing book.
+     *
+     * @param int $bookid Book instance ID
+     * @param string $title Chapter title
+     * @param string $content Chapter HTML content
+     * @param bool $subchapter Whether this is a subchapter
+     * @param int $pagenum Page number for ordering
+     * @param string $importsrc Repo path for tracking
+     */
+    public function create_book_chapter(int $bookid, string $title, string $content,
+            bool $subchapter, int $pagenum, string $importsrc): void {
+        global $DB;
+
+        $rec = new \stdClass();
+        $rec->bookid = $bookid;
+        $rec->pagenum = $pagenum;
+        $rec->subchapter = $subchapter ? 1 : 0;
+        $rec->title = $title;
+        $rec->content = purify_html($content);
+        $rec->contentformat = FORMAT_HTML;
+        $rec->hidden = 0;
+        $rec->importsrc = $importsrc;
+        $rec->timecreated = time();
+        $rec->timemodified = time();
+        $DB->insert_record('book_chapters', $rec);
     }
 
     /**
