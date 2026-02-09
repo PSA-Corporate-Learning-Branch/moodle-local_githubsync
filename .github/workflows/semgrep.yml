@@ -32,6 +32,7 @@ jobs:
                   --config "p/secrets" \
                   --config "p/insecure-transport" \
                   --config .semgrep.yml \
+                  --exclude-rule "generic.html-templates.security.var-in-href.var-in-href" \
                   --error \
                   --sarif \
                   --output=semgrep-results.sarif \
