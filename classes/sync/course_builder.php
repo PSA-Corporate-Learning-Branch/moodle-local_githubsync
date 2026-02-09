@@ -20,6 +20,7 @@ defined('MOODLE_INTERNAL') || die();
 
 require_once($CFG->dirroot . '/course/lib.php');
 require_once($CFG->dirroot . '/course/modlib.php');
+require_once($CFG->dirroot . '/lib/resourcelib.php');
 
 /**
  * Handles creating and updating Moodle course structure from repo data.
