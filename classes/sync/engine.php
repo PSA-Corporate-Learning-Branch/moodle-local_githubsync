@@ -520,8 +520,8 @@ class engine {
 
         $this->activitiescreated++;
         $this->chapterscreated += count($chapters);
-        $this->log_operation('book_create', $bookdirpath,
-            "created cmid={$cmid} with " . count($chapters) . " chapters");
+        $chaptercount = count($chapters);
+        $this->log_operation('book_create', $bookdirpath, "created cmid={$cmid} with {$chaptercount} chapters");
     }
 
     /**
@@ -533,8 +533,13 @@ class engine {
      * @param array $bookdata Book data: ['yaml' => path|null, 'chapters' => [filename => path]]
      * @param \stdClass $mapping Existing mapping record for the book directory
      */
-    private function update_existing_book(int $sectionnum, string $bookdir, string $bookdirpath,
-            array $bookdata, \stdClass $mapping): void {
+    private function update_existing_book(
+        int $sectionnum,
+        string $bookdir,
+        string $bookdirpath,
+        array $bookdata,
+        \stdClass $mapping
+    ): void {
         global $DB;
 
         $cmid = (int) $mapping->cmid;
@@ -609,8 +614,14 @@ class engine {
             }
 
             // Chapter content changed or is new.
-            $updated = $this->builder->update_book_chapter($bookid, $chapterpath, $chaptertitle,
-                $htmlcontent, $subchapter, $pagenum);
+            $updated = $this->builder->update_book_chapter(
+                $bookid,
+                $chapterpath,
+                $chaptertitle,
+                $htmlcontent,
+                $subchapter,
+                $pagenum
+            );
 
             if ($updated) {
                 $this->upsert_mapping($chapterpath, $cmid, null, $contenthash);
@@ -619,8 +630,14 @@ class engine {
                 $this->log_operation('chapter_update', $chapterpath, "updated in book cmid={$cmid}");
             } else {
                 // New chapter — create it.
-                $this->builder->create_book_chapter($bookid, $chaptertitle, $htmlcontent,
-                    $subchapter, $pagenum, $chapterpath);
+                $this->builder->create_book_chapter(
+                    $bookid,
+                    $chaptertitle,
+                    $htmlcontent,
+                    $subchapter,
+                    $pagenum,
+                    $chapterpath
+                );
                 $this->upsert_mapping($chapterpath, $cmid, null, $contenthash);
                 $this->chapterscreated++;
                 $bookchanged = true;
@@ -631,8 +648,11 @@ class engine {
         // Hide chapters whose importsrc is no longer in the chapter list.
         $existingchapters = $DB->get_records('book_chapters', ['bookid' => $bookid]);
         foreach ($existingchapters as $chapter) {
-            if (!empty($chapter->importsrc) && !in_array($chapter->importsrc, $currentimportsrcs)
-                    && !$chapter->hidden) {
+            if (
+                !empty($chapter->importsrc)
+                && !in_array($chapter->importsrc, $currentimportsrcs)
+                && !$chapter->hidden
+            ) {
                 $chapter->hidden = 1;
                 $chapter->timemodified = time();
                 $DB->update_record('book_chapters', $chapter);

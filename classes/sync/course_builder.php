@@ -367,9 +367,8 @@ class course_builder {
             }
         }
         if (isset($bookmeta['intro'])) {
-            $newintro = purify_html($bookmeta['intro']);
-            if ($newintro !== $book->intro) {
-                $book->intro = $newintro;
+            if (purify_html($bookmeta['intro']) !== $book->intro) {
+                $book->intro = purify_html($bookmeta['intro']);
                 $book->introformat = FORMAT_HTML;
                 $changed = true;
             }
@@ -393,8 +392,14 @@ class course_builder {
      * @param int $pagenum New page number
      * @return bool True if found and updated
      */
-    public function update_book_chapter(int $bookid, string $importsrc, string $title,
-            string $content, bool $subchapter, int $pagenum): bool {
+    public function update_book_chapter(
+        int $bookid,
+        string $importsrc,
+        string $title,
+        string $content,
+        bool $subchapter,
+        int $pagenum
+    ): bool {
         global $DB;
 
         $chapter = $DB->get_record('book_chapters', ['bookid' => $bookid, 'importsrc' => $importsrc]);
@@ -424,8 +429,14 @@ class course_builder {
      * @param int $pagenum Page number for ordering
      * @param string $importsrc Repo path for tracking
      */
-    public function create_book_chapter(int $bookid, string $title, string $content,
-            bool $subchapter, int $pagenum, string $importsrc): void {
+    public function create_book_chapter(
+        int $bookid,
+        string $title,
+        string $content,
+        bool $subchapter,
+        int $pagenum,
+        string $importsrc
+    ): void {
         global $DB;
 
         $rec = new \stdClass();
