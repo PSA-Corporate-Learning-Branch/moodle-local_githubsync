@@ -21,7 +21,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Run Semgrep OWASP Top 10 + Custom Moodle Rules
+      - name: Run Semgrep (text output for visibility)
         run: |
           semgrep --config "p/owasp-top-ten" \
                   --config "p/php" \
@@ -34,6 +34,21 @@ jobs:
                   --config .semgrep.yml \
                   --exclude-rule "generic.html-templates.security.var-in-href.var-in-href" \
                   --error \
+                  .
+
+      - name: Generate SARIF report
+        if: always()
+        run: |
+          semgrep --config "p/owasp-top-ten" \
+                  --config "p/php" \
+                  --config "p/security-audit" \
+                  --config "p/command-injection" \
+                  --config "p/sql-injection" \
+                  --config "p/xss" \
+                  --config "p/secrets" \
+                  --config "p/insecure-transport" \
+                  --config .semgrep.yml \
+                  --exclude-rule "generic.html-templates.security.var-in-href.var-in-href" \
                   --sarif \
                   --output=semgrep-results.sarif \
                   .
