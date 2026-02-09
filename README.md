@@ -15,6 +15,7 @@ A Moodle local plugin that syncs course content from a GitHub repository. Conten
 - **GitHub webhook** endpoint for instant sync on push
 - **CLI tool** for bulk syncing all configured courses
 - **PAT encryption** at rest using Moodle's Sodium-based encryption
+- **Built-in file editor** — browse, edit, and commit files back to GitHub directly from within Moodle
 - **Per-course configuration** with capability-based access control
 - **Sync history** with commit SHA tracking and detailed operation logs
 
@@ -279,6 +280,25 @@ Sync only auto-sync courses:
 php local/githubsync/cli/sync_all.php --auto-only
 ```
 
+### File Editor
+
+The plugin includes a built-in file editor that lets you browse, view, edit, and commit repository files directly from Moodle — no need to switch to GitHub or a local IDE for quick content changes.
+
+**Accessing the editor:** From the GitHub Sync configuration page for a course, click the **File Editor** link. Requires the `local/githubsync:configure` capability.
+
+**What you can do:**
+
+- **Browse** the full repository file tree in a collapsible sidebar
+- **View** any text file by clicking it in the tree
+- **Edit** file content in a textarea with keyboard shortcuts (Tab inserts spaces, Ctrl+S / Cmd+S saves)
+- **Commit** changes back to GitHub with a commit message
+
+**Conflict detection:** The editor tracks each file's Git blob SHA. If someone else modifies the file between your load and save, GitHub returns a conflict and the editor prompts you to reload before saving.
+
+**Binary files** (images, PDFs, archives, fonts, media) are shown in the tree but are not editable.
+
+**PAT requirements:** Your GitHub Personal Access Token must have **write access** to commit changes. For fine-grained tokens, set the "Contents" permission to "Read and write". For classic tokens, ensure the "repo" scope is enabled. Read-only tokens can still browse and view files but cannot save.
+
 ## Capabilities
 
 | Capability | Description | Default roles |
@@ -387,6 +407,7 @@ local/githubsync/
   lib.php                              # Navigation hooks and pluginfile handler
   config.php                           # Per-course configuration page
   sync.php                             # Sync trigger page
+  editor.php                           # File editor entry page
   webhook.php                          # GitHub webhook endpoint
   settings.php                         # Global admin settings
   LICENSE                              # GNU GPL v3
@@ -398,14 +419,24 @@ local/githubsync/
   db/
     install.xml                        # Database schema
     access.php                         # Capability definitions
+    services.php                       # External function (AJAX) registration
     tasks.php                          # Scheduled task registration
   lang/en/
     local_githubsync.php               # Language strings
+  templates/
+    editor.mustache                    # File editor UI template
+  amd/src/
+    editor.js                          # File editor frontend logic
+    repository.js                      # AJAX service calls
   classes/
     form/
       config_form.php                  # Per-course config form (moodleform)
     github/
       client.php                       # GitHub REST API client
+    external/
+      get_file_tree.php                # AJAX: list repo files
+      get_file_content.php             # AJAX: fetch file content + SHA
+      update_file.php                  # AJAX: commit file changes to GitHub
     sync/
       engine.php                       # Core sync orchestrator
       course_builder.php               # Creates/updates Moodle course structure
