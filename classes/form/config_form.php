@@ -45,7 +45,7 @@ class config_form extends \moodleform {
         $mform->addHelpButton('repo_url', 'repo_url', 'local_githubsync');
 
         $mform->addElement('password', 'pat', get_string('pat', 'local_githubsync'), ['size' => 60]);
-        $mform->setType('pat', PARAM_RAW);
+        $mform->setType('pat', PARAM_RAW_TRIMMED);
 
         $mform->addElement('text', 'branch', get_string('branch', 'local_githubsync'), ['size' => 30]);
         $mform->setType('branch', PARAM_TEXT);
@@ -94,7 +94,8 @@ class config_form extends \moodleform {
 
         // Validate GitHub PAT format if provided.
         if (!empty($data['pat'])) {
-            if (!preg_match('/^(ghp_[a-zA-Z0-9]{36,}|github_pat_[a-zA-Z0-9_]{22,})$/', $data['pat'])) {
+            $pat = trim($data['pat']);
+            if (!preg_match('/^(ghp_[a-zA-Z0-9]{36,}|github_pat_[a-zA-Z0-9_]{22,})$/', $pat)) {
                 $errors['pat'] = get_string('invalidpat', 'local_githubsync');
             }
         }

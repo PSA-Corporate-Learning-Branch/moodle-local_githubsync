@@ -640,7 +640,8 @@ class engine {
 
         try {
             $newencrypted = \core\encryption::encrypt($plainpat);
-            $records = $DB->get_records('local_githubsync_config', ['pat_encrypted' => $oldencrypted]);
+            $comparesql = $DB->sql_compare_text('pat_encrypted') . ' = ' . $DB->sql_compare_text(':pat');
+            $records = $DB->get_records_select('local_githubsync_config', $comparesql, ['pat' => $oldencrypted]);
             foreach ($records as $record) {
                 $record->pat_encrypted = $newencrypted;
                 $record->timemodified = time();
