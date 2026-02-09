@@ -168,7 +168,7 @@ class course_builder {
         // Page-specific fields — sanitize HTML from external source.
         $moduleinfo->content = purify_html($htmlcontent);
         $moduleinfo->contentformat = FORMAT_HTML;
-        $moduleinfo->display = RESOURCELIB_DISPLAY_OPEN;
+        $moduleinfo->display = \RESOURCELIB_DISPLAY_OPEN;
         $moduleinfo->printintro = 0;
         $moduleinfo->printlastmodified = 0;
 
@@ -259,7 +259,7 @@ class course_builder {
         $moduleinfo->visibleoncoursepage = 1;
 
         $moduleinfo->externalurl = $url;
-        $moduleinfo->display = RESOURCELIB_DISPLAY_AUTO;
+        $moduleinfo->display = \RESOURCELIB_DISPLAY_AUTO;
 
         $moduleinfo->intro = purify_html($intro);
         $moduleinfo->introformat = FORMAT_HTML;
