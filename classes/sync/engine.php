@@ -226,8 +226,10 @@ class engine {
             }
 
             // Chapter files: sections/NN-name/NN-bookname/NN-chapter.html.
-            if (preg_match('#^sections/([^/]+)/([^/]+)/([^/]+\.html)$#', $path, $matches)
-                    && $item['type'] === 'blob') {
+            if (
+                preg_match('#^sections/([^/]+)/([^/]+)/([^/]+\.html)$#', $path, $matches)
+                && $item['type'] === 'blob'
+            ) {
                 $dirname = $matches[1];
                 $bookdir = $matches[2];
                 $chapterfile = $matches[3];
@@ -602,8 +604,10 @@ class engine {
 
             if ($chaptermapping && $chaptermapping->content_hash === $contenthash) {
                 // Content unchanged — but still update pagenum in case ordering changed.
-                $existingchapter = $DB->get_record('book_chapters',
-                    ['bookid' => $bookid, 'importsrc' => $chapterpath]);
+                $existingchapter = $DB->get_record(
+                    'book_chapters',
+                    ['bookid' => $bookid, 'importsrc' => $chapterpath]
+                );
                 if ($existingchapter && (int) $existingchapter->pagenum !== $pagenum) {
                     $existingchapter->pagenum = $pagenum;
                     $existingchapter->timemodified = time();
