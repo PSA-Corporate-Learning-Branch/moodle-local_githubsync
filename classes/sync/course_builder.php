@@ -22,6 +22,11 @@ require_once($CFG->dirroot . '/course/lib.php');
 require_once($CFG->dirroot . '/course/modlib.php');
 require_once($CFG->dirroot . '/lib/resourcelib.php');
 require_once($CFG->dirroot . '/mod/book/locallib.php');
+require_once($CFG->dirroot . '/mod/lesson/lib.php');
+require_once($CFG->dirroot . '/mod/lesson/locallib.php');
+require_once($CFG->dirroot . '/mod/lesson/pagetypes/branchtable.php');
+require_once($CFG->dirroot . '/mod/lesson/pagetypes/truefalse.php');
+require_once($CFG->dirroot . '/mod/lesson/pagetypes/multichoice.php');
 
 /**
  * Handles creating and updating Moodle course structure from repo data.
@@ -47,7 +52,7 @@ class course_builder {
         $this->course = $course;
 
         // Cache module IDs for the types we support.
-        foreach (['page', 'label', 'url', 'book'] as $modname) {
+        foreach (['page', 'label', 'url', 'book', 'lesson'] as $modname) {
             $id = $DB->get_field('modules', 'id', ['name' => $modname]);
             if ($id) {
                 $this->moduleids[$modname] = (int) $id;
@@ -574,5 +579,613 @@ class course_builder {
         $name = ucwords(trim($name));
 
         return $name;
+    }
+
+    /**
+     * Parse YAML front matter from HTML content, supporting nested lists.
+     *
+     * Extends the basic parse_front_matter() to handle YAML lists for
+     * multichoice answers. Uses a state machine approach.
+     *
+     * @param string $content Raw file content
+     * @return array ['frontmatter' => array, 'content' => string]
+     */
+    public static function parse_lesson_front_matter(string $content): array {
+        if (!preg_match('/\A---\s*\n(.*?)\n---\s*\n/s', $content, $matches)) {
+            return ['frontmatter' => [], 'content' => $content];
+        }
+
+        $yamlblock = $matches[1];
+        $htmlcontent = substr($content, strlen($matches[0]));
+
+        $frontmatter = [];
+        $lines = explode("\n", $yamlblock);
+
+        // State machine: 'top' = flat key:value, 'list' = collecting list items.
+        $state = 'top';
+        $listkey = '';
+        $currentitem = null;
+
+        foreach ($lines as $line) {
+            $trimmed = trim($line);
+            if ($trimmed === '' || $trimmed[0] === '#') {
+                continue;
+            }
+
+            // Check if this is a list item: "  - key: value" or "  - text".
+            if (preg_match('/^\s+-\s+(.+)$/', $line, $m)) {
+                if ($state === 'list') {
+                    // If we have a pending item, save it.
+                    if ($currentitem !== null) {
+                        $frontmatter[$listkey][] = $currentitem;
+                    }
+                    // Check if this is "- key: value" (start of dict item).
+                    if (preg_match('/^([a-zA-Z_]+)\s*:\s*(.*)$/', trim($m[1]), $kv)) {
+                        $currentitem = [$kv[1] => self::parse_yaml_value(trim($kv[2]))];
+                    } else {
+                        // Simple list value.
+                        $currentitem = self::parse_yaml_value(trim($m[1]));
+                    }
+                }
+                continue;
+            }
+
+            // Check if this is a continuation of a dict item: "    key: value" (indented, no dash).
+            if ($state === 'list' && preg_match('/^\s{4,}([a-zA-Z_]+)\s*:\s*(.*)$/', $line, $kv)) {
+                if (is_array($currentitem)) {
+                    $currentitem[$kv[1]] = self::parse_yaml_value(trim($kv[2]));
+                }
+                continue;
+            }
+
+            // Top-level key: value.
+            if (preg_match('/^([a-zA-Z_]+)\s*:\s*(.*)$/', $trimmed, $m)) {
+                // Flush any pending list.
+                if ($state === 'list' && $currentitem !== null) {
+                    $frontmatter[$listkey][] = $currentitem;
+                    $currentitem = null;
+                }
+
+                $key = $m[1];
+                $value = trim($m[2]);
+
+                if ($value === '') {
+                    // Empty value = start of a list.
+                    $state = 'list';
+                    $listkey = $key;
+                    $frontmatter[$key] = [];
+                    $currentitem = null;
+                } else {
+                    $state = 'top';
+                    $frontmatter[$key] = self::parse_yaml_value($value);
+                }
+            }
+        }
+
+        // Flush any pending list item.
+        if ($state === 'list' && $currentitem !== null) {
+            $frontmatter[$listkey][] = $currentitem;
+        }
+
+        return ['frontmatter' => $frontmatter, 'content' => $htmlcontent];
+    }
+
+    /**
+     * Parse a single YAML value: handle booleans, numerics, and quoted strings.
+     *
+     * @param string $value Raw value string
+     * @return mixed Parsed value
+     */
+    private static function parse_yaml_value(string $value) {
+        // Remove surrounding quotes.
+        if (
+            (str_starts_with($value, '"') && str_ends_with($value, '"')) ||
+            (str_starts_with($value, "'") && str_ends_with($value, "'"))
+        ) {
+            return substr($value, 1, -1);
+        }
+
+        // Booleans.
+        if ($value === 'true') {
+            return true;
+        }
+        if ($value === 'false') {
+            return false;
+        }
+
+        // Integers.
+        if (ctype_digit($value)) {
+            return (int) $value;
+        }
+
+        return $value;
+    }
+
+    /**
+     * Create a Lesson activity with pages.
+     *
+     * @param int $sectionnum Section number
+     * @param string $name Lesson name
+     * @param array $pages Ordered array of page data: ['title', 'content', 'pagetype', 'pagedata']
+     * @param array $lessonmeta Optional lesson metadata from lesson.yaml
+     * @return array ['cmid' => int, 'pagemap' => [repo_path => lesson_pages_id]]
+     */
+    public function create_lesson(int $sectionnum, string $name, array $pages, array $lessonmeta = []): array {
+        global $DB, $PAGE;
+
+        if (empty($this->moduleids['lesson'])) {
+            throw new \moodle_exception('syncfailed', 'local_githubsync', '', 'Lesson module not available');
+        }
+
+        $moduleinfo = new \stdClass();
+        $moduleinfo->modulename = 'lesson';
+        $moduleinfo->module = $this->moduleids['lesson'];
+        $moduleinfo->name = !empty($lessonmeta['title']) ? $lessonmeta['title'] : $name;
+        $moduleinfo->section = $sectionnum;
+        $moduleinfo->visible = 1;
+        $moduleinfo->visibleoncoursepage = 1;
+
+        $moduleinfo->intro = purify_html($lessonmeta['intro'] ?? '');
+        $moduleinfo->introformat = FORMAT_HTML;
+
+        // Lesson-specific settings.
+        $moduleinfo->practice = !empty($lessonmeta['practice']) ? 1 : 0;
+        $moduleinfo->modattempts = !empty($lessonmeta['retake']) ? 1 : 0;
+        $moduleinfo->feedback = isset($lessonmeta['feedback']) ? ($lessonmeta['feedback'] ? 1 : 0) : 1;
+        $moduleinfo->review = !empty($lessonmeta['review']) ? 1 : 0;
+        $moduleinfo->maxattempts = $lessonmeta['maxattempts'] ?? 1;
+        $moduleinfo->retake = isset($lessonmeta['retake']) ? ($lessonmeta['retake'] ? 1 : 0) : 1;
+        $moduleinfo->progressbar = isset($lessonmeta['progressbar']) ? ($lessonmeta['progressbar'] ? 1 : 0) : 1;
+        $moduleinfo->maxanswers = 5;
+        $moduleinfo->grade = 100;
+        $moduleinfo->mediafile = 0;
+        $moduleinfo->available = 0;
+        $moduleinfo->deadline = 0;
+        $moduleinfo->usepassword = 0;
+        $moduleinfo->password = '';
+
+        $result = add_moduleinfo($moduleinfo, $this->course);
+        $cmid = $result->coursemodule;
+
+        // Load lesson object for page creation.
+        $cm = get_coursemodule_from_id('lesson', $cmid, 0, false, MUST_EXIST);
+        $lesson = new \lesson($DB->get_record('lesson', ['id' => $cm->instance], '*', MUST_EXIST));
+        $context = \context_module::instance($cmid);
+
+        // Set $PAGE->set_course() — needed in CLI context for file handling.
+        $PAGE->set_course($this->course);
+
+        // Insert pages in order, chaining prevpageid.
+        $prevpageid = 0;
+        $pagemap = [];
+        $pagecount = count($pages);
+        $pageindex = 0;
+
+        foreach ($pages as $pagedata) {
+            $pageindex++;
+            $islast = ($pageindex === $pagecount);
+
+            $properties = new \stdClass();
+            $properties->title = $pagedata['title'];
+            $properties->pageid = $prevpageid; // Insert after this page.
+            $properties->contents_editor = [
+                'text' => purify_html($pagedata['content']),
+                'format' => FORMAT_HTML,
+            ];
+
+            $pagetype = $pagedata['pagetype'] ?? 'content';
+
+            switch ($pagetype) {
+                case 'truefalse':
+                    $properties->qtype = \LESSON_PAGE_TRUEFALSE;
+                    $this->setup_truefalse_answers($properties, $pagedata['pagedata'] ?? []);
+                    break;
+
+                case 'multichoice':
+                    $properties->qtype = \LESSON_PAGE_MULTICHOICE;
+                    $properties->qoption = 0; // Single answer.
+                    $this->setup_multichoice_answers($properties, $pagedata['pagedata'] ?? []);
+                    break;
+
+                case 'content':
+                default:
+                    $properties->qtype = \LESSON_PAGE_BRANCHTABLE;
+                    $properties->layout = 1;
+                    $properties->display = 1;
+                    // Content page: single "Continue" button.
+                    $properties->answer_editor = [];
+                    $properties->jumpto = [];
+                    $properties->answer_editor[0] = 'Continue';
+                    $properties->jumpto[0] = $islast ? \LESSON_EOL : \LESSON_NEXTPAGE;
+                    break;
+            }
+
+            $newpage = \lesson_page::create($properties, $lesson, $context, $this->course->maxbytes);
+            $prevpageid = $newpage->id;
+
+            if (!empty($pagedata['repo_path'])) {
+                $pagemap[$pagedata['repo_path']] = $newpage->id;
+            }
+        }
+
+        return ['cmid' => $cmid, 'pagemap' => $pagemap];
+    }
+
+    /**
+     * Set up true/false answer properties for lesson page creation.
+     *
+     * @param \stdClass $properties Page properties to modify
+     * @param array $data Front matter data (correct, feedback_correct, feedback_incorrect)
+     */
+    private function setup_truefalse_answers(\stdClass $properties, array $data): void {
+        $correctistrue = $data['correct'] ?? true;
+
+        $properties->answer_editor = [];
+        $properties->response_editor = [];
+        $properties->jumpto = [];
+        $properties->score = [];
+
+        // Answer 0: True.
+        $properties->answer_editor[0] = ['text' => 'True', 'format' => FORMAT_HTML];
+        $properties->response_editor[0] = [
+            'text' => $correctistrue ? ($data['feedback_correct'] ?? '') : ($data['feedback_incorrect'] ?? ''),
+            'format' => FORMAT_HTML,
+        ];
+        $properties->jumpto[0] = $correctistrue ? \LESSON_NEXTPAGE : \LESSON_THISPAGE;
+        $properties->score[0] = $correctistrue ? 1 : 0;
+
+        // Answer 1: False.
+        $properties->answer_editor[1] = ['text' => 'False', 'format' => FORMAT_HTML];
+        $properties->response_editor[1] = [
+            'text' => $correctistrue ? ($data['feedback_incorrect'] ?? '') : ($data['feedback_correct'] ?? ''),
+            'format' => FORMAT_HTML,
+        ];
+        $properties->jumpto[1] = $correctistrue ? \LESSON_THISPAGE : \LESSON_NEXTPAGE;
+        $properties->score[1] = $correctistrue ? 0 : 1;
+    }
+
+    /**
+     * Set up multichoice answer properties for lesson page creation.
+     *
+     * @param \stdClass $properties Page properties to modify
+     * @param array $data Front matter data with 'answers' array
+     */
+    private function setup_multichoice_answers(\stdClass $properties, array $data): void {
+        $answers = $data['answers'] ?? [];
+
+        $properties->answer_editor = [];
+        $properties->response_editor = [];
+        $properties->jumpto = [];
+        $properties->score = [];
+
+        foreach ($answers as $i => $answer) {
+            $iscorrect = !empty($answer['correct']);
+            $properties->answer_editor[$i] = [
+                'text' => $answer['text'] ?? '',
+                'format' => FORMAT_HTML,
+            ];
+            $properties->response_editor[$i] = [
+                'text' => $answer['feedback'] ?? '',
+                'format' => FORMAT_HTML,
+            ];
+            $properties->jumpto[$i] = $iscorrect ? \LESSON_NEXTPAGE : \LESSON_THISPAGE;
+            $properties->score[$i] = $iscorrect ? 1 : 0;
+        }
+    }
+
+    /**
+     * Update lesson metadata (name, intro, settings) from lesson.yaml.
+     *
+     * @param int $cmid Course module ID of the lesson
+     * @param array $lessonmeta Parsed lesson.yaml data
+     */
+    public function update_lesson_metadata(int $cmid, array $lessonmeta): void {
+        global $DB;
+
+        $cm = get_coursemodule_from_id('lesson', $cmid, 0, false, MUST_EXIST);
+        $lesson = $DB->get_record('lesson', ['id' => $cm->instance], '*', MUST_EXIST);
+
+        $changed = false;
+
+        if (!empty($lessonmeta['title']) && $lessonmeta['title'] !== $lesson->name) {
+            $lesson->name = $lessonmeta['title'];
+            $changed = true;
+        }
+        if (isset($lessonmeta['intro'])) {
+            $newintra = purify_html($lessonmeta['intro']);
+            if ($newintra !== $lesson->intro) {
+                $lesson->intro = $newintra;
+                $lesson->introformat = FORMAT_HTML;
+                $changed = true;
+            }
+        }
+        if (isset($lessonmeta['practice']) && (int) !empty($lessonmeta['practice']) !== (int) $lesson->practice) {
+            $lesson->practice = !empty($lessonmeta['practice']) ? 1 : 0;
+            $changed = true;
+        }
+        if (isset($lessonmeta['retake']) && ($lessonmeta['retake'] ? 1 : 0) !== (int) $lesson->retake) {
+            $lesson->retake = $lessonmeta['retake'] ? 1 : 0;
+            $changed = true;
+        }
+        if (isset($lessonmeta['feedback']) && ($lessonmeta['feedback'] ? 1 : 0) !== (int) $lesson->feedback) {
+            $lesson->feedback = $lessonmeta['feedback'] ? 1 : 0;
+            $changed = true;
+        }
+        if (isset($lessonmeta['review']) && ($lessonmeta['review'] ? 1 : 0) !== (int) $lesson->review) {
+            $lesson->review = $lessonmeta['review'] ? 1 : 0;
+            $changed = true;
+        }
+        if (isset($lessonmeta['maxattempts']) && (int) $lessonmeta['maxattempts'] !== (int) $lesson->maxattempts) {
+            $lesson->maxattempts = (int) $lessonmeta['maxattempts'];
+            $changed = true;
+        }
+        if (isset($lessonmeta['progressbar']) && ($lessonmeta['progressbar'] ? 1 : 0) !== (int) $lesson->progressbar) {
+            $lesson->progressbar = $lessonmeta['progressbar'] ? 1 : 0;
+            $changed = true;
+        }
+
+        if ($changed) {
+            $lesson->timemodified = time();
+            $DB->update_record('lesson', $lesson);
+            rebuild_course_cache($this->course->id, true);
+        }
+    }
+
+    /**
+     * Update an existing lesson page's content and answers.
+     *
+     * @param int $lessonid Lesson instance ID
+     * @param int $pageid Lesson page ID
+     * @param string $title Page title
+     * @param string $content Page HTML content
+     * @param string $pagetype Page type: 'content', 'truefalse', 'multichoice'
+     * @param array $pagedata Front matter data for questions
+     * @return bool True if updated
+     */
+    public function update_lesson_page(
+        int $lessonid,
+        int $pageid,
+        string $title,
+        string $content,
+        string $pagetype,
+        array $pagedata
+    ): bool {
+        global $DB;
+
+        $page = $DB->get_record('lesson_pages', ['id' => $pageid, 'lessonid' => $lessonid]);
+        if (!$page) {
+            return false;
+        }
+
+        $page->title = $title;
+        $page->contents = purify_html($content);
+        $page->contentsformat = FORMAT_HTML;
+        $page->timemodified = time();
+        $DB->update_record('lesson_pages', $page);
+
+        // For question pages, rebuild answers.
+        if ($pagetype === 'truefalse' || $pagetype === 'multichoice') {
+            // Delete existing answers.
+            $DB->delete_records('lesson_answers', ['pageid' => $pageid, 'lessonid' => $lessonid]);
+
+            // Re-insert answers.
+            if ($pagetype === 'truefalse') {
+                $this->insert_truefalse_answers($lessonid, $pageid, $pagedata);
+            } else {
+                $this->insert_multichoice_answers($lessonid, $pageid, $pagedata);
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Insert true/false answers for a lesson page.
+     *
+     * @param int $lessonid Lesson instance ID
+     * @param int $pageid Lesson page ID
+     * @param array $data Front matter data
+     */
+    private function insert_truefalse_answers(int $lessonid, int $pageid, array $data): void {
+        global $DB;
+
+        $correctistrue = $data['correct'] ?? true;
+        $now = time();
+
+        // Answer 0: True.
+        $answer = new \stdClass();
+        $answer->lessonid = $lessonid;
+        $answer->pageid = $pageid;
+        $answer->answer = 'True';
+        $answer->answerformat = FORMAT_HTML;
+        $answer->response = $correctistrue ? ($data['feedback_correct'] ?? '') : ($data['feedback_incorrect'] ?? '');
+        $answer->responseformat = FORMAT_HTML;
+        $answer->jumpto = $correctistrue ? \LESSON_NEXTPAGE : \LESSON_THISPAGE;
+        $answer->score = $correctistrue ? 1 : 0;
+        $answer->flags = 0;
+        $answer->timecreated = $now;
+        $answer->timemodified = $now;
+        $DB->insert_record('lesson_answers', $answer);
+
+        // Answer 1: False.
+        $answer2 = new \stdClass();
+        $answer2->lessonid = $lessonid;
+        $answer2->pageid = $pageid;
+        $answer2->answer = 'False';
+        $answer2->answerformat = FORMAT_HTML;
+        $answer2->response = $correctistrue ? ($data['feedback_incorrect'] ?? '') : ($data['feedback_correct'] ?? '');
+        $answer2->responseformat = FORMAT_HTML;
+        $answer2->jumpto = $correctistrue ? \LESSON_THISPAGE : \LESSON_NEXTPAGE;
+        $answer2->score = $correctistrue ? 0 : 1;
+        $answer2->flags = 0;
+        $answer2->timecreated = $now;
+        $answer2->timemodified = $now;
+        $DB->insert_record('lesson_answers', $answer2);
+    }
+
+    /**
+     * Insert multichoice answers for a lesson page.
+     *
+     * @param int $lessonid Lesson instance ID
+     * @param int $pageid Lesson page ID
+     * @param array $data Front matter data with 'answers' array
+     */
+    private function insert_multichoice_answers(int $lessonid, int $pageid, array $data): void {
+        global $DB;
+
+        $answers = $data['answers'] ?? [];
+        $now = time();
+
+        foreach ($answers as $answerdata) {
+            $iscorrect = !empty($answerdata['correct']);
+            $answer = new \stdClass();
+            $answer->lessonid = $lessonid;
+            $answer->pageid = $pageid;
+            $answer->answer = $answerdata['text'] ?? '';
+            $answer->answerformat = FORMAT_HTML;
+            $answer->response = $answerdata['feedback'] ?? '';
+            $answer->responseformat = FORMAT_HTML;
+            $answer->jumpto = $iscorrect ? \LESSON_NEXTPAGE : \LESSON_THISPAGE;
+            $answer->score = $iscorrect ? 1 : 0;
+            $answer->flags = 0;
+            $answer->timecreated = $now;
+            $answer->timemodified = $now;
+            $DB->insert_record('lesson_answers', $answer);
+        }
+    }
+
+    /**
+     * Create a single page in an existing lesson.
+     *
+     * @param int $lessonid Lesson instance ID
+     * @param int $cmid Course module ID
+     * @param string $title Page title
+     * @param string $content Page HTML content
+     * @param string $pagetype Page type: 'content', 'truefalse', 'multichoice'
+     * @param array $pagedata Front matter data for questions
+     * @param int $afterpageid Insert after this page (0 = beginning)
+     * @param bool $islast Whether this is the last page
+     * @return int The new lesson_pages.id
+     */
+    public function create_lesson_page(
+        int $lessonid,
+        int $cmid,
+        string $title,
+        string $content,
+        string $pagetype,
+        array $pagedata,
+        int $afterpageid = 0,
+        bool $islast = false
+    ): int {
+        global $DB, $PAGE;
+
+        $lesson = new \lesson($DB->get_record('lesson', ['id' => $lessonid], '*', MUST_EXIST));
+        $context = \context_module::instance($cmid);
+        $PAGE->set_course($this->course);
+
+        $properties = new \stdClass();
+        $properties->title = $title;
+        $properties->pageid = $afterpageid;
+        $properties->contents_editor = [
+            'text' => purify_html($content),
+            'format' => FORMAT_HTML,
+        ];
+
+        switch ($pagetype) {
+            case 'truefalse':
+                $properties->qtype = \LESSON_PAGE_TRUEFALSE;
+                $this->setup_truefalse_answers($properties, $pagedata);
+                break;
+
+            case 'multichoice':
+                $properties->qtype = \LESSON_PAGE_MULTICHOICE;
+                $properties->qoption = 0;
+                $this->setup_multichoice_answers($properties, $pagedata);
+                break;
+
+            case 'content':
+            default:
+                $properties->qtype = \LESSON_PAGE_BRANCHTABLE;
+                $properties->layout = 1;
+                $properties->display = 1;
+                $properties->answer_editor = [];
+                $properties->jumpto = [];
+                $properties->answer_editor[0] = 'Continue';
+                $properties->jumpto[0] = $islast ? \LESSON_EOL : \LESSON_NEXTPAGE;
+                break;
+        }
+
+        $newpage = \lesson_page::create($properties, $lesson, $context, $this->course->maxbytes);
+        return $newpage->id;
+    }
+
+    /**
+     * Reorder lesson pages by rebuilding the doubly-linked list.
+     *
+     * @param int $lessonid Lesson instance ID
+     * @param array $orderedpageids Ordered array of page IDs
+     */
+    public function reorder_lesson_pages(int $lessonid, array $orderedpageids): void {
+        global $DB;
+
+        $count = count($orderedpageids);
+        for ($i = 0; $i < $count; $i++) {
+            $pageid = $orderedpageids[$i];
+            $previd = ($i > 0) ? $orderedpageids[$i - 1] : 0;
+            $nextid = ($i < $count - 1) ? $orderedpageids[$i + 1] : 0;
+
+            $DB->set_field('lesson_pages', 'prevpageid', $previd, ['id' => $pageid, 'lessonid' => $lessonid]);
+            $DB->set_field('lesson_pages', 'nextpageid', $nextid, ['id' => $pageid, 'lessonid' => $lessonid]);
+        }
+    }
+
+    /**
+     * Delete a lesson page using Moodle's API.
+     *
+     * @param int $lessonid Lesson instance ID
+     * @param int $pageid Lesson page ID
+     * @param int $cmid Course module ID
+     */
+    public function delete_lesson_page(int $lessonid, int $pageid, int $cmid): void {
+        global $DB;
+
+        $lesson = new \lesson($DB->get_record('lesson', ['id' => $lessonid], '*', MUST_EXIST));
+        $pages = $lesson->load_all_pages();
+
+        if (isset($pages[$pageid])) {
+            $pages[$pageid]->delete();
+        }
+    }
+
+    /**
+     * Update the "Continue" button jump on the last content page of a lesson.
+     *
+     * When pages are reordered, the last content page should jump to EOL.
+     *
+     * @param int $lessonid Lesson instance ID
+     * @param array $orderedpageids Ordered page IDs
+     */
+    public function fix_lesson_content_jumps(int $lessonid, array $orderedpageids): void {
+        global $DB;
+
+        $count = count($orderedpageids);
+        for ($i = 0; $i < $count; $i++) {
+            $pageid = $orderedpageids[$i];
+            $page = $DB->get_record('lesson_pages', ['id' => $pageid, 'lessonid' => $lessonid]);
+            if (!$page || (int) $page->qtype !== \LESSON_PAGE_BRANCHTABLE) {
+                continue;
+            }
+
+            $islast = ($i === $count - 1);
+            // Get the first answer (the "Continue" button).
+            $answer = $DB->get_records('lesson_answers', ['pageid' => $pageid, 'lessonid' => $lessonid], 'id ASC', '*', 0, 1);
+            if (!empty($answer)) {
+                $answer = reset($answer);
+                $expectedjump = $islast ? \LESSON_EOL : \LESSON_NEXTPAGE;
+                if ((int) $answer->jumpto !== $expectedjump) {
+                    $DB->set_field('lesson_answers', 'jumpto', $expectedjump, ['id' => $answer->id]);
+                }
+            }
+        }
     }
 }

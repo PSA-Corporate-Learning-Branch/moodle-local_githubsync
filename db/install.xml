@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<XMLDB PATH="local/githubsync/db" VERSION="2026020700" COMMENT="GitHub Sync plugin tables">
+<XMLDB PATH="local/githubsync/db" VERSION="2026020901" COMMENT="GitHub Sync plugin tables">
   <TABLES>
     <TABLE NAME="local_githubsync_config" COMMENT="Per-course GitHub sync configuration">
       <FIELDS>
@@ -28,6 +28,7 @@
         <FIELD NAME="cmid" TYPE="int" LENGTH="10" NOTNULL="false" COMMENT="FK to course_modules.id"/>
         <FIELD NAME="sectionid" TYPE="int" LENGTH="10" NOTNULL="false" COMMENT="FK to course_sections.id"/>
         <FIELD NAME="content_hash" TYPE="char" LENGTH="40" NOTNULL="false" COMMENT="SHA1 of synced content"/>
+        <FIELD NAME="itemid" TYPE="int" LENGTH="10" NOTNULL="false" COMMENT="Sub-item ID (e.g. lesson_pages.id)"/>
         <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true"/>
         <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true"/>
       </FIELDS>
@@ -37,6 +38,7 @@
       </KEYS>
       <INDEXES>
         <INDEX NAME="courseid_repopath" UNIQUE="true" FIELDS="courseid,repo_path"/>
+        <INDEX NAME="cmid_itemid" UNIQUE="false" FIELDS="cmid,itemid"/>
       </INDEXES>
     </TABLE>
     <TABLE NAME="local_githubsync_log" COMMENT="Sync operation log">

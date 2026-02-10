@@ -74,6 +74,15 @@ class engine {
     /** @var int Assets uploaded count */
     private int $assetsuploaded = 0;
 
+    /** @var int Lesson pages created count */
+    private int $lessonpagescreated = 0;
+
+    /** @var int Lesson pages updated count */
+    private int $lessonpagesupdated = 0;
+
+    /** @var int Lesson pages removed count */
+    private int $lessonpageshidden = 0;
+
     /**
      * Constructor.
      *
@@ -211,6 +220,20 @@ class engine {
                 continue;
             }
 
+            // Lesson yaml: sections/NN-name/NN-lessondir/lesson.yaml.
+            if (preg_match('#^sections/([^/]+)/([^/]+)/lesson\.yaml$#', $path, $matches) && $item['type'] === 'blob') {
+                $dirname = $matches[1];
+                $subdir = $matches[2];
+                if (!isset($structure['sections'][$dirname])) {
+                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => [], 'books' => []];
+                }
+                if (!isset($structure['sections'][$dirname]['books'][$subdir])) {
+                    $structure['sections'][$dirname]['books'][$subdir] = ['yaml' => null, 'chapters' => []];
+                }
+                $structure['sections'][$dirname]['books'][$subdir]['lesson_yaml'] = $path;
+                continue;
+            }
+
             // Book yaml: sections/NN-name/NN-bookname/book.yaml.
             if (preg_match('#^sections/([^/]+)/([^/]+)/book\.yaml$#', $path, $matches) && $item['type'] === 'blob') {
                 $dirname = $matches[1];
@@ -258,12 +281,31 @@ class engine {
         // Sort sections by directory name (numeric prefix gives correct order).
         ksort($structure['sections']);
 
-        // Sort pages and books within each section, and chapters within each book.
+        // Classification pass: move subdirectories with lesson.yaml from books to lessons.
         foreach ($structure['sections'] as &$section) {
+            if (!isset($section['lessons'])) {
+                $section['lessons'] = [];
+            }
+
+            foreach ($section['books'] as $subdir => $data) {
+                if (!empty($data['lesson_yaml'])) {
+                    // Move to lessons, renaming 'chapters' to 'pages'.
+                    $section['lessons'][$subdir] = [
+                        'yaml' => $data['lesson_yaml'],
+                        'pages' => $data['chapters'],
+                    ];
+                    unset($section['books'][$subdir]);
+                }
+            }
+
             ksort($section['pages']);
             ksort($section['books']);
+            ksort($section['lessons']);
             foreach ($section['books'] as &$book) {
                 ksort($book['chapters']);
+            }
+            foreach ($section['lessons'] as &$lesson) {
+                ksort($lesson['pages']);
             }
         }
 
@@ -341,6 +383,12 @@ class engine {
             if (!empty($sectiondata['books'])) {
                 $bookpaths = $this->process_section_books($sectionnum, $dirname, $sectiondata['books']);
                 $currentpaths = array_merge($currentpaths, $bookpaths);
+            }
+
+            // Process lesson directories in this section.
+            if (!empty($sectiondata['lessons'])) {
+                $lessonpaths = $this->process_section_lessons($sectionnum, $dirname, $sectiondata['lessons']);
+                $currentpaths = array_merge($currentpaths, $lessonpaths);
             }
         }
 
@@ -680,6 +728,294 @@ class engine {
     }
 
     /**
+     * Process lesson directories within a section.
+     *
+     * @param int $sectionnum Section number
+     * @param string $sectiondirname Section directory name
+     * @param array $lessons Associative array of lessondir => ['yaml' => path, 'pages' => [filename => path]]
+     * @return array List of all repo_paths tracked
+     */
+    private function process_section_lessons(int $sectionnum, string $sectiondirname, array $lessons): array {
+        global $DB;
+
+        $paths = [];
+
+        foreach ($lessons as $lessondir => $lessondata) {
+            $lessondirpath = "sections/{$sectiondirname}/{$lessondir}";
+            $paths[] = $lessondirpath;
+
+            if (!empty($lessondata['yaml'])) {
+                $paths[] = $lessondata['yaml'];
+            }
+
+            foreach ($lessondata['pages'] as $pagefile => $pagepath) {
+                $paths[] = $pagepath;
+            }
+
+            // Check if this lesson already exists via mapping.
+            $mapping = $DB->get_record('local_githubsync_mapping', [
+                'courseid' => $this->course->id,
+                'repo_path' => $lessondirpath,
+            ]);
+
+            if ($mapping && !empty($mapping->cmid)) {
+                $this->update_existing_lesson($sectionnum, $lessondir, $lessondirpath, $lessondata, $mapping);
+            } else {
+                $this->create_new_lesson($sectionnum, $lessondir, $lessondirpath, $lessondata);
+            }
+        }
+
+        return $paths;
+    }
+
+    /**
+     * Create a new lesson activity from a lesson directory.
+     *
+     * @param int $sectionnum Section number
+     * @param string $lessondir Lesson directory name
+     * @param string $lessondirpath Full repo path to lesson directory
+     * @param array $lessondata Lesson data: ['yaml' => path, 'pages' => [filename => path]]
+     */
+    private function create_new_lesson(
+        int $sectionnum,
+        string $lessondir,
+        string $lessondirpath,
+        array $lessondata
+    ): void {
+        // Parse lesson.yaml for metadata.
+        $lessonmeta = [];
+        $yamlhash = null;
+        if (!empty($lessondata['yaml'])) {
+            $yamlcontent = $this->github->get_file_contents($lessondata['yaml']);
+            $lessonmeta = $this->parse_yaml($yamlcontent);
+            $yamlhash = sha1($yamlcontent);
+        }
+
+        // Derive lesson name from directory if not in yaml.
+        $lessonname = !empty($lessonmeta['title'])
+            ? $lessonmeta['title']
+            : course_builder::derive_activity_name($lessondir);
+
+        // Fetch and parse all page files.
+        $pages = [];
+        $pagehashes = [];
+        foreach ($lessondata['pages'] as $pagefile => $pagepath) {
+            $rawcontent = $this->github->get_file_contents($pagepath);
+            $parsed = course_builder::parse_lesson_front_matter($rawcontent);
+            $frontmatter = $parsed['frontmatter'];
+            $htmlcontent = $parsed['content'];
+
+            if ($this->assets) {
+                $htmlcontent = $this->assets->rewrite_asset_urls($htmlcontent);
+            }
+
+            $pagetitle = $frontmatter['title'] ?? course_builder::derive_activity_name($pagefile);
+            $pagetype = $frontmatter['type'] ?? 'content';
+
+            $pages[] = [
+                'title' => $pagetitle,
+                'content' => $htmlcontent,
+                'pagetype' => $pagetype,
+                'pagedata' => $frontmatter,
+                'repo_path' => $pagepath,
+            ];
+            $pagehashes[$pagepath] = sha1($rawcontent);
+        }
+
+        if (empty($pages)) {
+            $this->log_operation('lesson_skip', $lessondirpath, 'no pages found');
+            return;
+        }
+
+        // Create the lesson activity with all pages.
+        $result = $this->builder->create_lesson($sectionnum, $lessonname, $pages, $lessonmeta);
+        $cmid = $result['cmid'];
+        $pagemap = $result['pagemap'];
+
+        // Create mapping for the lesson directory.
+        $this->upsert_mapping($lessondirpath, $cmid, null, $yamlhash);
+
+        // Create mapping for lesson.yaml.
+        if (!empty($lessondata['yaml'])) {
+            $this->upsert_mapping($lessondata['yaml'], $cmid, null, $yamlhash);
+        }
+
+        // Create mapping rows for each page file (with itemid).
+        foreach ($pagehashes as $pagepath => $hash) {
+            $itemid = $pagemap[$pagepath] ?? null;
+            $this->upsert_mapping($pagepath, $cmid, null, $hash, $itemid);
+        }
+
+        $this->activitiescreated++;
+        $this->lessonpagescreated += count($pages);
+        $pagecount = count($pages);
+        $this->log_operation('lesson_create', $lessondirpath, "created cmid={$cmid} with {$pagecount} pages");
+    }
+
+    /**
+     * Update an existing lesson activity.
+     *
+     * @param int $sectionnum Section number
+     * @param string $lessondir Lesson directory name
+     * @param string $lessondirpath Full repo path to lesson directory
+     * @param array $lessondata Lesson data: ['yaml' => path, 'pages' => [filename => path]]
+     * @param \stdClass $mapping Existing mapping record for the lesson directory
+     */
+    private function update_existing_lesson(
+        int $sectionnum,
+        string $lessondir,
+        string $lessondirpath,
+        array $lessondata,
+        \stdClass $mapping
+    ): void {
+        global $DB;
+
+        $cmid = (int) $mapping->cmid;
+        $lessonchanged = false;
+
+        // Check lesson.yaml for metadata changes.
+        if (!empty($lessondata['yaml'])) {
+            $yamlcontent = $this->github->get_file_contents($lessondata['yaml']);
+            $yamlhash = sha1($yamlcontent);
+
+            $yamlmapping = $DB->get_record('local_githubsync_mapping', [
+                'courseid' => $this->course->id,
+                'repo_path' => $lessondata['yaml'],
+            ]);
+
+            if (!$yamlmapping || $yamlmapping->content_hash !== $yamlhash) {
+                $lessonmeta = $this->parse_yaml($yamlcontent);
+                $this->builder->update_lesson_metadata($cmid, $lessonmeta);
+                $this->upsert_mapping($lessondata['yaml'], $cmid, null, $yamlhash);
+                $lessonchanged = true;
+                $this->log_operation('lesson_meta_update', $lessondata['yaml'], "updated lesson metadata cmid={$cmid}");
+            }
+        }
+
+        // Get the lesson instance ID.
+        $cm = get_coursemodule_from_id('lesson', $cmid, 0, false, IGNORE_MISSING);
+        if (!$cm) {
+            $this->log_operation('lesson_error', $lessondirpath, "cmid={$cmid} not found, skipping");
+            return;
+        }
+        $lessonid = (int) $cm->instance;
+
+        // Process each page file.
+        $currentpagepaths = [];
+        $desiredpageorder = [];
+
+        foreach ($lessondata['pages'] as $pagefile => $pagepath) {
+            $currentpagepaths[] = $pagepath;
+
+            $rawcontent = $this->github->get_file_contents($pagepath);
+            $parsed = course_builder::parse_lesson_front_matter($rawcontent);
+            $frontmatter = $parsed['frontmatter'];
+            $htmlcontent = $parsed['content'];
+
+            if ($this->assets) {
+                $htmlcontent = $this->assets->rewrite_asset_urls($htmlcontent);
+            }
+
+            $contenthash = sha1($rawcontent);
+            $pagetitle = $frontmatter['title'] ?? course_builder::derive_activity_name($pagefile);
+            $pagetype = $frontmatter['type'] ?? 'content';
+
+            // Check existing page mapping.
+            $pagemapping = $DB->get_record('local_githubsync_mapping', [
+                'courseid' => $this->course->id,
+                'repo_path' => $pagepath,
+            ]);
+
+            if ($pagemapping && !empty($pagemapping->itemid)) {
+                // Page exists.
+                $desiredpageorder[] = (int) $pagemapping->itemid;
+
+                if ($pagemapping->content_hash === $contenthash) {
+                    // Content unchanged.
+                    continue;
+                }
+
+                // Content changed — update page.
+                $updated = $this->builder->update_lesson_page(
+                    $lessonid,
+                    (int) $pagemapping->itemid,
+                    $pagetitle,
+                    $htmlcontent,
+                    $pagetype,
+                    $frontmatter
+                );
+
+                if ($updated) {
+                    $this->upsert_mapping($pagepath, $cmid, null, $contenthash, (int) $pagemapping->itemid);
+                    $this->lessonpagesupdated++;
+                    $lessonchanged = true;
+                    $this->log_operation('lesson_page_update', $pagepath, "updated in lesson cmid={$cmid}");
+                }
+            } else {
+                // New page — find the page to insert after.
+                $afterpageid = !empty($desiredpageorder) ? end($desiredpageorder) : 0;
+                $islast = ($pagefile === array_key_last($lessondata['pages']));
+
+                $newpageid = $this->builder->create_lesson_page(
+                    $lessonid,
+                    $cmid,
+                    $pagetitle,
+                    $htmlcontent,
+                    $pagetype,
+                    $frontmatter,
+                    $afterpageid,
+                    $islast
+                );
+
+                $desiredpageorder[] = $newpageid;
+                $this->upsert_mapping($pagepath, $cmid, null, $contenthash, $newpageid);
+                $this->lessonpagescreated++;
+                $lessonchanged = true;
+                $this->log_operation('lesson_page_create', $pagepath, "added to lesson cmid={$cmid}");
+            }
+        }
+
+        // Handle removed pages: find mapping rows with itemid for this cmid not in current list.
+        $sql = "SELECT * FROM {local_githubsync_mapping}
+                 WHERE courseid = :courseid AND cmid = :cmid AND itemid IS NOT NULL";
+        $existingpagemappings = $DB->get_records_sql($sql, [
+            'courseid' => $this->course->id,
+            'cmid' => $cmid,
+        ]);
+
+        foreach ($existingpagemappings as $pm) {
+            if (!in_array($pm->repo_path, $currentpagepaths)) {
+                // Page removed from repo — delete it.
+                try {
+                    $this->builder->delete_lesson_page($lessonid, (int) $pm->itemid, $cmid);
+                    $DB->delete_records('local_githubsync_mapping', ['id' => $pm->id]);
+                    $this->lessonpageshidden++;
+                    $lessonchanged = true;
+
+                    // Remove from desired order if present.
+                    $desiredpageorder = array_values(array_diff($desiredpageorder, [(int) $pm->itemid]));
+
+                    $this->log_operation('lesson_page_delete', $pm->repo_path, "deleted from lesson cmid={$cmid}");
+                } catch (\Exception $e) {
+                    $this->log_operation('lesson_page_delete_error', $pm->repo_path, $e->getMessage());
+                }
+            }
+        }
+
+        // Reorder pages and fix content jumps if anything changed.
+        if ($lessonchanged && !empty($desiredpageorder)) {
+            $this->builder->reorder_lesson_pages($lessonid, $desiredpageorder);
+            $this->builder->fix_lesson_content_jumps($lessonid, $desiredpageorder);
+
+            // Bump lesson timemodified.
+            $DB->set_field('lesson', 'timemodified', time(), ['id' => $lessonid]);
+
+            $this->activitiesupdated++;
+            $this->log_operation('lesson_update', $lessondirpath, "updated lesson cmid={$cmid}");
+        }
+    }
+
+    /**
      * Detect files that were removed from the repo and hide corresponding activities.
      *
      * @param array $currentpaths All repo paths currently in the repo
@@ -732,8 +1068,15 @@ class engine {
      * @param int|null $cmid Course module ID
      * @param int|null $sectionid Section ID
      * @param string|null $contenthash Content hash
+     * @param int|null $itemid Sub-item ID (e.g. lesson_pages.id)
      */
-    private function upsert_mapping(string $repopath, ?int $cmid, ?int $sectionid, ?string $contenthash): void {
+    private function upsert_mapping(
+        string $repopath,
+        ?int $cmid,
+        ?int $sectionid,
+        ?string $contenthash,
+        ?int $itemid = null
+    ): void {
         global $DB;
 
         $now = time();
@@ -753,6 +1096,9 @@ class engine {
             if ($contenthash !== null) {
                 $existing->content_hash = $contenthash;
             }
+            if ($itemid !== null) {
+                $existing->itemid = $itemid;
+            }
             $DB->update_record('local_githubsync_mapping', $existing);
         } else {
             $record = new \stdClass();
@@ -761,6 +1107,7 @@ class engine {
             $record->cmid = $cmid;
             $record->sectionid = $sectionid;
             $record->content_hash = $contenthash;
+            $record->itemid = $itemid;
             $record->timecreated = $now;
             $record->timemodified = $now;
             $DB->insert_record('local_githubsync_mapping', $record);
@@ -810,6 +1157,15 @@ class engine {
         }
         if ($this->chaptershidden > 0) {
             $parts[] = get_string('chapters_hidden', 'local_githubsync', $this->chaptershidden);
+        }
+        if ($this->lessonpagescreated > 0) {
+            $parts[] = get_string('lessonpages_created', 'local_githubsync', $this->lessonpagescreated);
+        }
+        if ($this->lessonpagesupdated > 0) {
+            $parts[] = get_string('lessonpages_updated', 'local_githubsync', $this->lessonpagesupdated);
+        }
+        if ($this->lessonpageshidden > 0) {
+            $parts[] = get_string('lessonpages_hidden', 'local_githubsync', $this->lessonpageshidden);
         }
         if ($this->assetsuploaded > 0) {
             $parts[] = get_string('assets_uploaded', 'local_githubsync', $this->assetsuploaded);

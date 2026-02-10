@@ -24,8 +24,8 @@
 
 defined('MOODLE_INTERNAL') || die();
 
-$plugin->version   = 2026020900;
+$plugin->version   = 2026020901;
 $plugin->requires  = 2022112800; // Moodle 4.1+.
 $plugin->component = 'local_githubsync';
 $plugin->maturity  = MATURITY_BETA;
-$plugin->release   = '0.6.0';
+$plugin->release   = '0.7.0';
