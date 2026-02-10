@@ -892,9 +892,8 @@ class course_builder {
             $changed = true;
         }
         if (isset($lessonmeta['intro'])) {
-            $newintra = purify_html($lessonmeta['intro']);
-            if ($newintra !== $lesson->intro) {
-                $lesson->intro = $newintra;
+            if (purify_html($lessonmeta['intro']) !== $lesson->intro) {
+                $lesson->intro = purify_html($lessonmeta['intro']);
                 $lesson->introformat = FORMAT_HTML;
                 $changed = true;
             }
