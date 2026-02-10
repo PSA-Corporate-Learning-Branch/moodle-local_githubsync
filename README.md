@@ -245,7 +245,7 @@ A "Continue" button is automatically added. The last page links to End of Lesson
 **True/false question:**
 ```html
 ---
-pagetype: truefalse
+type: truefalse
 correct: true
 feedback_correct: "That's right! PPE is always required."
 feedback_incorrect: "Actually, PPE is required in all work areas."
@@ -255,7 +255,7 @@ feedback_incorrect: "Actually, PPE is required in all work areas."
 
 | Field | Description |
 |-------|-------------|
-| `pagetype` | `truefalse` |
+| `type` | `truefalse` |
 | `correct` | `true` or `false` — which answer is correct |
 | `feedback_correct` | Feedback shown when the student answers correctly |
 | `feedback_incorrect` | Feedback shown when the student answers incorrectly |
@@ -263,7 +263,7 @@ feedback_incorrect: "Actually, PPE is required in all work areas."
 **Multichoice question:**
 ```html
 ---
-pagetype: multichoice
+type: multichoice
 answers:
   - text: "Stop work and report it"
     correct: true
@@ -280,7 +280,7 @@ answers:
 
 | Field | Description |
 |-------|-------------|
-| `pagetype` | `multichoice` |
+| `type` | `multichoice` |
 | `answers` | List of answer options, each with `text`, `correct`, and `feedback` |
 
 Correct answers advance to the next page; incorrect answers stay on the current page.
