@@ -6,7 +6,7 @@ A Moodle local plugin that syncs course content from a GitHub repository. Conten
 
 - **One-click sync** from a GitHub repository into a Moodle course
 - **Automatic section creation** based on directory structure
-- **Page, Label, URL, and Book activities** created from HTML files and directories
+- **Page, Label, URL, Book, and Lesson activities** created from HTML files and directories
 - **YAML front matter** support for controlling activity types
 - **Asset management** — CSS, images, and JS uploaded to Moodle file storage with automatic URL rewriting
 - **Incremental sync** — only changed files are updated (content hash tracking)
@@ -56,6 +56,11 @@ sections/
     section.yaml
     01-lesson.html
     02-external-link.html          # -> URL activity (with front matter)
+    03-safety-training/            # -> Lesson activity "Safety Training"
+      lesson.yaml                  # Optional: title, intro, practice, retake
+      01-introduction.html         # -> Content page
+      02-hazard-check.html         # -> True/false question (with front matter)
+      03-procedure-quiz.html       # -> Multichoice question (with front matter)
 assets/
   css/
     custom.css                     # Shared stylesheets
@@ -123,7 +128,7 @@ url: "https://docs.moodle.org"
 **Supported front matter fields:**
 | Field | Description |
 |-------|-------------|
-| `type` | Activity type: `page` (default), `label`, or `url`. Books are created from directories, not front matter. Other Moodle activity types (quiz, forum, assign, etc.) are not yet implemented. Unrecognized types are treated as `page`. |
+| `type` | Activity type: `page` (default), `label`, or `url`. Books and Lessons are created from directories, not front matter. Other Moodle activity types (quiz, forum, assign, etc.) are not yet implemented. Unrecognized types are treated as `page`. |
 | `name` | Override the activity name (otherwise derived from filename) |
 | `url` | External URL (required for `type: url`) |
 | `visible` | `true` or `false` |
@@ -184,6 +189,109 @@ subchapter: true
 - **Removed chapter file**: The chapter is hidden (not deleted), matching the behavior for removed pages
 - **Modified book.yaml**: Updates book name, numbering, and intro without touching chapters
 - **Reordered chapters** (renamed with different numeric prefixes): Page numbers are updated even if content is unchanged
+
+### Lesson Activities
+
+A subdirectory inside a section directory that contains a `lesson.yaml` file (or has its name recognized as a lesson) becomes a **Lesson** activity. Each `.html` file in the subdirectory becomes a lesson page. Pages can be content pages, true/false questions, or multichoice questions, controlled by YAML front matter.
+
+```
+sections/
+  01-introduction/
+    03-safety-training/              # -> Lesson "Safety Training"
+      lesson.yaml                    # Optional metadata
+      01-introduction.html           # -> Content page
+      02-hazard-check.html           # -> True/false question
+      03-procedure-quiz.html         # -> Multichoice question
+```
+
+#### lesson.yaml
+
+Optional. Sets lesson-level metadata:
+
+```yaml
+title: "Safety Training"
+intro: "<p>Complete this lesson to demonstrate your understanding.</p>"
+practice: false
+retake: true
+feedback: true
+review: false
+maxattempts: 3
+progressbar: true
+```
+
+| Field | Description |
+|-------|-------------|
+| `title` | Override the lesson name (otherwise derived from directory name) |
+| `intro` | HTML description shown on the lesson's intro page |
+| `practice` | Practice lesson — no grades recorded (default: `false`) |
+| `retake` | Allow students to retake the lesson (default: `true`) |
+| `feedback` | Show feedback after answering (default: `true`) |
+| `review` | Allow students to review their answers (default: `false`) |
+| `maxattempts` | Maximum number of attempts (default: `1`) |
+| `progressbar` | Show progress bar (default: `true`) |
+
+#### Lesson Page Types
+
+Each HTML file in a lesson directory becomes a page. The page type is set via front matter:
+
+**Content page** (default — no front matter needed):
+```html
+<h2>Introduction to Safety</h2>
+<p>This module covers workplace safety fundamentals.</p>
+```
+
+A "Continue" button is automatically added. The last page links to End of Lesson.
+
+**True/false question:**
+```html
+---
+pagetype: truefalse
+correct: true
+feedback_correct: "That's right! PPE is always required."
+feedback_incorrect: "Actually, PPE is required in all work areas."
+---
+<p>Personal protective equipment (PPE) must be worn in all work areas.</p>
+```
+
+| Field | Description |
+|-------|-------------|
+| `pagetype` | `truefalse` |
+| `correct` | `true` or `false` — which answer is correct |
+| `feedback_correct` | Feedback shown when the student answers correctly |
+| `feedback_incorrect` | Feedback shown when the student answers incorrectly |
+
+**Multichoice question:**
+```html
+---
+pagetype: multichoice
+answers:
+  - text: "Stop work and report it"
+    correct: true
+    feedback: "Correct! Always stop and report hazards."
+  - text: "Ignore it and continue"
+    correct: false
+    feedback: "Incorrect. Ignoring hazards puts everyone at risk."
+  - text: "Fix it yourself without training"
+    correct: false
+    feedback: "Incorrect. Only trained personnel should address hazards."
+---
+<p>What should you do if you notice a safety hazard?</p>
+```
+
+| Field | Description |
+|-------|-------------|
+| `pagetype` | `multichoice` |
+| `answers` | List of answer options, each with `text`, `correct`, and `feedback` |
+
+Correct answers advance to the next page; incorrect answers stay on the current page.
+
+#### Sync Behavior for Lessons
+
+- **New lesson directory**: Creates the lesson activity and all pages in one operation
+- **Modified page**: Only the changed page is updated (content hash tracking via `itemid` in the mapping table)
+- **New page file**: Added at the correct position based on filename ordering
+- **Removed page file**: The page mapping is updated; pages are managed through the lesson's linked list
+- **Modified lesson.yaml**: Updates lesson name, intro, and settings without touching pages
 
 ### Assets
 
