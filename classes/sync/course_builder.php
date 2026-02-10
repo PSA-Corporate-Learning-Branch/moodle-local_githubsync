@@ -998,7 +998,7 @@ class course_builder {
         $answer->pageid = $pageid;
         $answer->answer = 'True';
         $answer->answerformat = FORMAT_HTML;
-        $answer->response = $correctistrue ? ($data['feedback_correct'] ?? '') : ($data['feedback_incorrect'] ?? '');
+        $answer->response = purify_html($correctistrue ? ($data['feedback_correct'] ?? '') : ($data['feedback_incorrect'] ?? ''));
         $answer->responseformat = FORMAT_HTML;
         $answer->jumpto = $correctistrue ? \LESSON_NEXTPAGE : \LESSON_THISPAGE;
         $answer->score = $correctistrue ? 1 : 0;
@@ -1013,7 +1013,7 @@ class course_builder {
         $answer2->pageid = $pageid;
         $answer2->answer = 'False';
         $answer2->answerformat = FORMAT_HTML;
-        $answer2->response = $correctistrue ? ($data['feedback_incorrect'] ?? '') : ($data['feedback_correct'] ?? '');
+        $answer2->response = purify_html($correctistrue ? ($data['feedback_incorrect'] ?? '') : ($data['feedback_correct'] ?? ''));
         $answer2->responseformat = FORMAT_HTML;
         $answer2->jumpto = $correctistrue ? \LESSON_THISPAGE : \LESSON_NEXTPAGE;
         $answer2->score = $correctistrue ? 0 : 1;
@@ -1041,9 +1041,9 @@ class course_builder {
             $answer = new \stdClass();
             $answer->lessonid = $lessonid;
             $answer->pageid = $pageid;
-            $answer->answer = $answerdata['text'] ?? '';
+            $answer->answer = purify_html($answerdata['text'] ?? '');
             $answer->answerformat = FORMAT_HTML;
-            $answer->response = $answerdata['feedback'] ?? '';
+            $answer->response = purify_html($answerdata['feedback'] ?? '');
             $answer->responseformat = FORMAT_HTML;
             $answer->jumpto = $iscorrect ? \LESSON_NEXTPAGE : \LESSON_THISPAGE;
             $answer->score = $iscorrect ? 1 : 0;
