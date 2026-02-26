@@ -1206,8 +1206,12 @@ class course_builder {
         if (!empty($this->moduleids['hvp'])) {
             return $this->create_hvp($sectionnum, $name, $h5pcontent);
         }
-        throw new \moodle_exception('syncfailed', 'local_githubsync', '',
-            'No H5P module available (need mod_h5pactivity or mod_hvp)');
+        throw new \moodle_exception(
+            'syncfailed',
+            'local_githubsync',
+            '',
+            'No H5P module available (need mod_h5pactivity or mod_hvp)'
+        );
     }
 
     /**
