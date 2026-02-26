@@ -192,7 +192,7 @@ class engine {
             if (preg_match('#^sections/([^/]+)$#', $path, $matches) && $item['type'] === 'tree') {
                 $dirname = $matches[1];
                 if (!isset($structure['sections'][$dirname])) {
-                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => [], 'books' => []];
+                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => [], 'books' => [], 'h5p_files' => []];
                 }
                 continue;
             }
@@ -201,7 +201,7 @@ class engine {
             if (preg_match('#^sections/([^/]+)/section\.yaml$#', $path, $matches) && $item['type'] === 'blob') {
                 $dirname = $matches[1];
                 if (!isset($structure['sections'][$dirname])) {
-                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => [], 'books' => []];
+                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => [], 'books' => [], 'h5p_files' => []];
                 }
                 $structure['sections'][$dirname]['yaml'] = $path;
                 continue;
@@ -212,7 +212,7 @@ class engine {
                 $dirname = $matches[1];
                 $bookdir = $matches[2];
                 if (!isset($structure['sections'][$dirname])) {
-                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => [], 'books' => []];
+                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => [], 'books' => [], 'h5p_files' => []];
                 }
                 if (!isset($structure['sections'][$dirname]['books'][$bookdir])) {
                     $structure['sections'][$dirname]['books'][$bookdir] = ['yaml' => null, 'chapters' => []];
@@ -225,7 +225,7 @@ class engine {
                 $dirname = $matches[1];
                 $subdir = $matches[2];
                 if (!isset($structure['sections'][$dirname])) {
-                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => [], 'books' => []];
+                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => [], 'books' => [], 'h5p_files' => []];
                 }
                 if (!isset($structure['sections'][$dirname]['books'][$subdir])) {
                     $structure['sections'][$dirname]['books'][$subdir] = ['yaml' => null, 'chapters' => []];
@@ -239,7 +239,7 @@ class engine {
                 $dirname = $matches[1];
                 $bookdir = $matches[2];
                 if (!isset($structure['sections'][$dirname])) {
-                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => [], 'books' => []];
+                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => [], 'books' => [], 'h5p_files' => []];
                 }
                 if (!isset($structure['sections'][$dirname]['books'][$bookdir])) {
                     $structure['sections'][$dirname]['books'][$bookdir] = ['yaml' => null, 'chapters' => []];
@@ -257,7 +257,7 @@ class engine {
                 $bookdir = $matches[2];
                 $chapterfile = $matches[3];
                 if (!isset($structure['sections'][$dirname])) {
-                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => [], 'books' => []];
+                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => [], 'books' => [], 'h5p_files' => []];
                 }
                 if (!isset($structure['sections'][$dirname]['books'][$bookdir])) {
                     $structure['sections'][$dirname]['books'][$bookdir] = ['yaml' => null, 'chapters' => []];
@@ -266,12 +266,23 @@ class engine {
                 continue;
             }
 
+            // H5P files in section: sections/NN-name/NN-activity.h5p.
+            if (preg_match('#^sections/([^/]+)/([^/]+\.h5p)$#', $path, $matches) && $item['type'] === 'blob') {
+                $dirname = $matches[1];
+                $filename = $matches[2];
+                if (!isset($structure['sections'][$dirname])) {
+                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => [], 'books' => [], 'h5p_files' => []];
+                }
+                $structure['sections'][$dirname]['h5p_files'][$filename] = $path;
+                continue;
+            }
+
             // HTML files in section (not nested in subdirectory): sections/NN-name/NN-page.html.
             if (preg_match('#^sections/([^/]+)/([^/]+\.html)$#', $path, $matches) && $item['type'] === 'blob') {
                 $dirname = $matches[1];
                 $filename = $matches[2];
                 if (!isset($structure['sections'][$dirname])) {
-                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => [], 'books' => []];
+                    $structure['sections'][$dirname] = ['yaml' => null, 'pages' => [], 'books' => [], 'h5p_files' => []];
                 }
                 $structure['sections'][$dirname]['pages'][$filename] = $path;
                 continue;
@@ -301,6 +312,7 @@ class engine {
             ksort($section['pages']);
             ksort($section['books']);
             ksort($section['lessons']);
+            ksort($section['h5p_files']);
             foreach ($section['books'] as &$book) {
                 ksort($book['chapters']);
             }
@@ -390,6 +402,12 @@ class engine {
                 $lessonpaths = $this->process_section_lessons($sectionnum, $dirname, $sectiondata['lessons']);
                 $currentpaths = array_merge($currentpaths, $lessonpaths);
             }
+
+            // Process H5P files in this section.
+            if (!empty($sectiondata['h5p_files'])) {
+                $h5ppaths = $this->process_section_h5p($sectionnum, $sectiondata['h5p_files']);
+                $currentpaths = array_merge($currentpaths, $h5ppaths);
+            }
         }
 
         return $currentpaths;
@@ -452,6 +470,64 @@ class engine {
                 $this->activitiescreated++;
                 $acttype = $frontmatter['type'] ?? 'page';
                 $this->log_operation("{$acttype}_create", $repopath, "created cmid={$cmid}");
+            }
+        }
+
+        return $paths;
+    }
+
+    /**
+     * Process H5P files within a section.
+     *
+     * @param int $sectionnum Section number
+     * @param array $h5pfiles Associative array of filename => repo_path
+     * @return array List of repo_paths processed
+     */
+    private function process_section_h5p(int $sectionnum, array $h5pfiles): array {
+        global $DB;
+
+        $paths = [];
+
+        foreach ($h5pfiles as $filename => $repopath) {
+            $paths[] = $repopath;
+            $activityname = course_builder::derive_activity_name($filename);
+            $rawcontent = $this->github->get_file_contents($repopath);
+
+            $contenthash = sha1($rawcontent);
+
+            // Check existing mapping.
+            $mapping = $DB->get_record('local_githubsync_mapping', [
+                'courseid' => $this->course->id,
+                'repo_path' => $repopath,
+            ]);
+
+            if ($mapping && !empty($mapping->cmid)) {
+                // Activity exists — check if content changed.
+                if ($mapping->content_hash === $contenthash) {
+                    $this->log_operation('h5p_skip', $repopath, 'unchanged');
+                    continue;
+                }
+
+                // Content changed — recreate (H5P activities are replaced wholesale).
+                try {
+                    $cm = get_coursemodule_from_id('', $mapping->cmid, 0, false, IGNORE_MISSING);
+                    if ($cm) {
+                        course_delete_module($mapping->cmid);
+                    }
+                } catch (\Exception $e) {
+                    $this->log_operation('h5p_delete_error', $repopath, $e->getMessage());
+                }
+
+                $cmid = $this->builder->create_h5p_activity($sectionnum, $activityname, $rawcontent);
+                $this->upsert_mapping($repopath, $cmid, null, $contenthash);
+                $this->activitiesupdated++;
+                $this->log_operation('h5p_update', $repopath, "replaced cmid={$cmid}");
+            } else {
+                // New activity — create.
+                $cmid = $this->builder->create_h5p_activity($sectionnum, $activityname, $rawcontent);
+                $this->upsert_mapping($repopath, $cmid, null, $contenthash);
+                $this->activitiescreated++;
+                $this->log_operation('h5p_create', $repopath, "created cmid={$cmid}");
             }
         }
 

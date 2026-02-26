@@ -52,7 +52,7 @@ class course_builder {
         $this->course = $course;
 
         // Cache module IDs for the types we support.
-        foreach (['page', 'label', 'url', 'book', 'lesson'] as $modname) {
+        foreach (['page', 'label', 'url', 'book', 'lesson', 'hvp', 'h5pactivity'] as $modname) {
             $id = $DB->get_field('modules', 'id', ['name' => $modname]);
             if ($id) {
                 $this->moduleids[$modname] = (int) $id;
@@ -1186,5 +1186,165 @@ class course_builder {
                 }
             }
         }
+    }
+
+    /**
+     * Create an H5P activity, dispatching to whichever H5P module is installed.
+     *
+     * Prefers core mod_h5pactivity over third-party mod_hvp.
+     *
+     * @param int $sectionnum Section number
+     * @param string $name Activity name
+     * @param string $h5pcontent Raw .h5p file binary content
+     * @return int The course module ID (cmid)
+     * @throws \moodle_exception If no H5P module is available
+     */
+    public function create_h5p_activity(int $sectionnum, string $name, string $h5pcontent): int {
+        if (!empty($this->moduleids['h5pactivity'])) {
+            return $this->create_h5pactivity($sectionnum, $name, $h5pcontent);
+        }
+        if (!empty($this->moduleids['hvp'])) {
+            return $this->create_hvp($sectionnum, $name, $h5pcontent);
+        }
+        throw new \moodle_exception('syncfailed', 'local_githubsync', '',
+            'No H5P module available (need mod_h5pactivity or mod_hvp)');
+    }
+
+    /**
+     * Create an H5P activity using core mod_h5pactivity.
+     *
+     * Writes the .h5p binary to a draft file area then creates the activity
+     * via add_moduleinfo().
+     *
+     * @param int $sectionnum Section number
+     * @param string $name Activity name
+     * @param string $h5pcontent Raw .h5p file binary content
+     * @return int The course module ID (cmid)
+     */
+    private function create_h5pactivity(int $sectionnum, string $name, string $h5pcontent): int {
+        global $USER;
+
+        // Write .h5p content to a temp file.
+        $tempdir = make_temp_directory('githubsync_h5p');
+        $tempfile = $tempdir . '/' . clean_filename($name) . '.h5p';
+        file_put_contents($tempfile, $h5pcontent);
+
+        // Create a draft file in the user's draft area.
+        $fs = get_file_storage();
+        $usercontext = \context_user::instance($USER->id);
+        $draftitemid = file_get_unused_draft_itemid();
+
+        $filerecord = [
+            'contextid' => $usercontext->id,
+            'component' => 'user',
+            'filearea' => 'draft',
+            'itemid' => $draftitemid,
+            'filepath' => '/',
+            'filename' => clean_filename($name) . '.h5p',
+        ];
+        $fs->create_file_from_pathname($filerecord, $tempfile);
+        @unlink($tempfile);
+
+        // Build moduleinfo for h5pactivity.
+        $moduleinfo = new \stdClass();
+        $moduleinfo->modulename = 'h5pactivity';
+        $moduleinfo->module = $this->moduleids['h5pactivity'];
+        $moduleinfo->name = $name;
+        $moduleinfo->section = $sectionnum;
+        $moduleinfo->visible = 1;
+        $moduleinfo->visibleoncoursepage = 1;
+
+        $moduleinfo->intro = '';
+        $moduleinfo->introformat = FORMAT_HTML;
+
+        // Package file reference.
+        $moduleinfo->packagefile = $draftitemid;
+
+        // Display options.
+        $moduleinfo->displayoptions = 0;
+
+        $result = add_moduleinfo($moduleinfo, $this->course);
+
+        return $result->coursemodule;
+    }
+
+    /**
+     * Create an H5P activity using third-party mod_hvp (Joubel).
+     *
+     * Extracts content JSON and library info from the .h5p ZIP in memory,
+     * creates the activity module, and populates the hvp table.
+     *
+     * @param int $sectionnum Section number
+     * @param string $name Activity name
+     * @param string $h5pcontent Raw .h5p file binary content
+     * @return int The course module ID (cmid)
+     */
+    private function create_hvp(int $sectionnum, string $name, string $h5pcontent): int {
+        global $DB;
+
+        // Extract content.json and h5p.json from the .h5p ZIP.
+        $tempfile = tempnam(sys_get_temp_dir(), 'h5p_');
+        file_put_contents($tempfile, $h5pcontent);
+
+        $jsoncontent = '{}';
+        $machinename = '';
+        $majorversion = 1;
+        $minorversion = 0;
+
+        $zip = new \ZipArchive();
+        if ($zip->open($tempfile) === true) {
+            $contentjson = $zip->getFromName('content/content.json');
+            if ($contentjson !== false) {
+                $jsoncontent = $contentjson;
+            }
+
+            $h5pjson = $zip->getFromName('h5p.json');
+            if ($h5pjson !== false) {
+                $manifest = json_decode($h5pjson, true);
+                if ($manifest) {
+                    $machinename = $manifest['mainLibrary'] ?? '';
+                    // Find the main library version from preloadedDependencies.
+                    foreach ($manifest['preloadedDependencies'] ?? [] as $dep) {
+                        if (($dep['machineName'] ?? '') === $machinename) {
+                            $majorversion = $dep['majorVersion'] ?? 1;
+                            $minorversion = $dep['minorVersion'] ?? 0;
+                            break;
+                        }
+                    }
+                }
+            }
+            $zip->close();
+        }
+        @unlink($tempfile);
+
+        // Create the course module.
+        $moduleinfo = new \stdClass();
+        $moduleinfo->modulename = 'hvp';
+        $moduleinfo->module = $this->moduleids['hvp'];
+        $moduleinfo->name = $name;
+        $moduleinfo->section = $sectionnum;
+        $moduleinfo->visible = 1;
+        $moduleinfo->visibleoncoursepage = 1;
+
+        $moduleinfo->intro = '';
+        $moduleinfo->introformat = FORMAT_HTML;
+
+        $result = add_moduleinfo($moduleinfo, $this->course);
+        $cmid = $result->coursemodule;
+
+        // Populate the hvp table with content data.
+        $cm = get_coursemodule_from_id('hvp', $cmid, 0, false, MUST_EXIST);
+        $hvprecord = $DB->get_record('hvp', ['id' => $cm->instance]);
+        if ($hvprecord) {
+            $hvprecord->json_content = $jsoncontent;
+            $hvprecord->machine_name = $machinename;
+            $hvprecord->major_version = $majorversion;
+            $hvprecord->minor_version = $minorversion;
+            $hvprecord->embed_type = 'div';
+            $hvprecord->timemodified = time();
+            $DB->update_record('hvp', $hvprecord);
+        }
+
+        return $cmid;
     }
 }
